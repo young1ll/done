@@ -12,6 +12,19 @@
           "timeout": 5000
         }
       ]
+    },
+    {
+      "matcher": {
+        "tool_name": "Write|Edit",
+        "file_paths": ["**/MILESTONES.md"]
+      },
+      "hooks": [
+        {
+          "type": "prompt",
+          "prompt": "MILESTONES.md 파일이 수정되었습니다. 파일 내용을 확인하여 현재 마일스톤의 진행률이 100%인지 확인하세요. 만약 Progress: 100% 또는 모든 태스크가 [x]로 완료된 경우, 사용자에게 '/pm:auto-report monthly' 또는 '/pm:new-report retrospective'로 회고 보고서 작성을 제안하세요. 마일스톤이 완료되지 않았다면 아무 것도 출력하지 마세요.",
+          "timeout": 10000
+        }
+      ]
     }
   ]
 }
