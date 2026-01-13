@@ -31,6 +31,25 @@ PROJECT.yaml 기반 체계적 문서 관리, 마일스톤 추적, **문서 + 시
 | `/pm:sync` | MILESTONES.md 진행률 자동 동기화 |
 | `/pm:adopt` | 기존 프로젝트에 PM 문서 체계 도입 |
 
+### 작업 관리 명령어
+
+| 명령어 | 설명 |
+|--------|------|
+| `/pm:add-task <name> [options]` | 새 작업 추가 (위치 지정 가능) |
+| `/pm:plan-tasks` | 인터랙티브 마일스톤 재구성 |
+
+```bash
+# 작업 추가 예시
+/pm:add-task "새 기능 구현"                    # 마지막에 추가
+/pm:add-task "테스트 작성" --after "API 구현"  # 특정 작업 뒤에 추가
+/pm:add-task "긴급 수정" --position 1          # 첫 번째 위치에 추가
+
+# 인터랙티브 재구성
+/pm:plan-tasks                                  # 작업 추가/순서변경/제거
+/pm:plan-tasks --analyze                        # 분석만 수행
+/pm:plan-tasks --auto-sort                      # 자동 정렬
+```
+
 ### 분석 명령어
 
 | 명령어 | 설명 |
