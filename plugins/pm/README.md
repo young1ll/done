@@ -13,7 +13,7 @@ PROJECT.yaml 기반 체계적 문서 관리, 마일스톤 추적, **문서 + 시
 
 ```bash
 # Claude Code에서
-/plugins add pm@young1ll-plugins
+/plugins add pm@done
 ```
 
 ## 명령어
