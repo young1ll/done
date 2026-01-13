@@ -1,11 +1,7 @@
 {
   "name": "pm",
-  "description": "Project documentation management and workflow orchestration. PROJECT.yaml-based systematic document management, milestone tracking, and automated validation.",
-  "version": "1.0.0",
+  "description": "Project documentation management and workflow orchestration",
   "author": {
     "name": "young1ll"
-  },
-  "license": "MIT",
-  "keywords": ["project-management", "documentation", "milestones", "workflow"],
-  "homepage": "https://github.com/young1ll/claude-plugins-young1ll/tree/main/plugins/pm"
+  }
 }
