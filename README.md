@@ -12,7 +12,7 @@ Personal Claude Code plugin collection.
 
 ```bash
 # In Claude Code
-/plugins add pm@claude-plugins-young1ll
+/plugins add pm@young1ll-plugins
 ```
 
 ## License
