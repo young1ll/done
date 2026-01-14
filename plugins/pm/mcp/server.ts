@@ -25,6 +25,9 @@ import {
   SprintRepository,
   TaskRepository,
   AnalyticsRepository,
+  ProjectConfigRepository,
+  // Reserved for Phase 3+ (offline sync queue)
+  // SyncQueueRepository,
 } from "./lib/projections.js";
 import {
   getCurrentBranch,
@@ -33,6 +36,13 @@ import {
   getGitStats,
   getGitHotspots,
 } from "./lib/server-helpers.js";
+import {
+  getRepoInfo,
+  isAuthenticated,
+  getIssue,
+  createIssue as createGitHubIssue,
+} from "../lib/github.js";
+import { SyncEngine, type LocalTask } from "../lib/sync-engine.js";
 import { randomUUID } from "crypto";
 
 // ============================================
@@ -61,6 +71,9 @@ let projectRepo: ProjectRepository;
 let sprintRepo: SprintRepository;
 let taskRepo: TaskRepository;
 let analyticsRepo: AnalyticsRepository;
+let configRepo: ProjectConfigRepository;
+// Reserved for Phase 3+ (offline sync queue)
+// let syncQueueRepo: SyncQueueRepository;
 
 // ============================================
 // Resources (Static, User/App Controlled)
@@ -549,11 +562,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "pm_git_commit_link",
-        description: "Link a commit to a task",
+        description: "Link a commit to a task (supports UUID or #seq format)",
         inputSchema: {
           type: "object",
           properties: {
-            taskId: { type: "string" },
+            taskId: { type: "string", description: "Task UUID or #seq (e.g., #42)" },
+            projectId: { type: "string", description: "Required when using #seq format" },
             commitSha: { type: "string" },
             branch: { type: "string" },
             message: { type: "string" },
@@ -571,13 +585,29 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "pm_git_parse_commit",
-        description: "Parse a commit message for magic words",
+        description: "Parse a commit message for magic words and resolve task references",
         inputSchema: {
           type: "object",
           properties: {
             message: { type: "string" },
+            projectId: { type: "string", description: "Resolve #seq to actual tasks" },
           },
           required: ["message"],
+        },
+      },
+      {
+        name: "pm_git_process_commit",
+        description: "Process a commit: parse message, update task status via magic words, link commit",
+        inputSchema: {
+          type: "object",
+          properties: {
+            commitSha: { type: "string" },
+            message: { type: "string" },
+            projectId: { type: "string" },
+            branch: { type: "string" },
+            dryRun: { type: "boolean", description: "Preview changes without applying" },
+          },
+          required: ["commitSha", "message", "projectId"],
         },
       },
 
@@ -601,6 +631,123 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {
             limit: { type: "integer", default: 10 },
+          },
+        },
+      },
+
+      // GitHub Integration (LEVEL_1 Section 6)
+      {
+        name: "pm_github_status",
+        description: "Check GitHub CLI authentication and repository status",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      {
+        name: "pm_github_issue_create",
+        description: "Create a GitHub issue from a task",
+        inputSchema: {
+          type: "object",
+          properties: {
+            taskId: { type: "string", description: "Task UUID or #seq" },
+            projectId: { type: "string", description: "Required when using #seq" },
+            labels: {
+              type: "array",
+              items: { type: "string" },
+              description: "GitHub labels to add",
+            },
+          },
+          required: ["taskId"],
+        },
+      },
+      {
+        name: "pm_github_issue_link",
+        description: "Link a task to an existing GitHub issue",
+        inputSchema: {
+          type: "object",
+          properties: {
+            taskId: { type: "string", description: "Task UUID or #seq" },
+            projectId: { type: "string", description: "Required when using #seq" },
+            issueNumber: { type: "integer", description: "GitHub issue number" },
+          },
+          required: ["taskId", "issueNumber"],
+        },
+      },
+      {
+        name: "pm_github_config",
+        description: "Configure GitHub integration for a project",
+        inputSchema: {
+          type: "object",
+          properties: {
+            projectId: { type: "string" },
+            action: {
+              type: "string",
+              enum: ["get", "enable", "disable"],
+              description: "Action to perform",
+            },
+          },
+          required: ["projectId", "action"],
+        },
+      },
+
+      // Sync Tools (LEVEL_1 Section 8)
+      {
+        name: "pm_sync_pull",
+        description: "Pull changes from GitHub Issues to local tasks",
+        inputSchema: {
+          type: "object",
+          properties: {
+            projectId: { type: "string" },
+            dryRun: { type: "boolean", description: "Preview changes without applying" },
+          },
+          required: ["projectId"],
+        },
+      },
+      {
+        name: "pm_sync_push",
+        description: "Push local task changes to GitHub Issues",
+        inputSchema: {
+          type: "object",
+          properties: {
+            taskId: { type: "string", description: "Task UUID or #seq" },
+            projectId: { type: "string" },
+            action: {
+              type: "string",
+              enum: ["create", "update"],
+              description: "Action to perform",
+            },
+          },
+          required: ["taskId", "projectId", "action"],
+        },
+      },
+
+      // Sync Queue Tools (Offline-First)
+      {
+        name: "pm_sync_queue_status",
+        description: "Get sync queue status and statistics",
+        inputSchema: {
+          type: "object",
+          properties: {},
+        },
+      },
+      {
+        name: "pm_sync_queue_process",
+        description: "Process pending items in the sync queue",
+        inputSchema: {
+          type: "object",
+          properties: {
+            limit: { type: "number", description: "Max items to process (default: 10)" },
+          },
+        },
+      },
+      {
+        name: "pm_sync_queue_retry",
+        description: "Retry failed sync queue items",
+        inputSchema: {
+          type: "object",
+          properties: {
+            itemId: { type: "number", description: "Specific item ID to retry (optional)" },
           },
         },
       },
@@ -872,7 +1019,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           .slice(0, 30);
 
         // LEVEL_1 format: {issue_number}-{type}-{description}
-        const branchName = `${task.id.slice(0, 8)}-${type}-${description}`;
+        // Use seq if available, otherwise fall back to UUID prefix
+        const issueId = task.seq ? String(task.seq) : task.id.slice(0, 8);
+        const branchName = `${issueId}-${type}-${description}`;
 
         return {
           content: [
@@ -883,6 +1032,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                   branchName,
                   command: `git checkout -b ${branchName}`,
                   taskId: task.id,
+                  taskSeq: task.seq,
                   taskTitle: task.title,
                 },
                 null,
@@ -894,19 +1044,43 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "pm_git_commit_link": {
-        createTaskEvent(eventStore, "TaskLinkedToCommit", args.taskId as string, {
+        const taskIdOrSeq = args.taskId as string;
+        const projectId = args.projectId as string | undefined;
+
+        // Resolve task: support #seq format or UUID
+        let task;
+        if (projectId && taskIdOrSeq.match(/^#?\d+$/)) {
+          task = taskRepo.findTask(projectId, taskIdOrSeq);
+          if (!task) {
+            return {
+              content: [{ type: "text", text: `Task ${taskIdOrSeq} not found in project` }],
+              isError: true,
+            };
+          }
+        } else {
+          task = taskRepo.getById(taskIdOrSeq);
+          if (!task) {
+            return {
+              content: [{ type: "text", text: `Task ${taskIdOrSeq} not found` }],
+              isError: true,
+            };
+          }
+        }
+
+        createTaskEvent(eventStore, "TaskLinkedToCommit", task.id, {
           commitSha: args.commitSha,
           branch: args.branch,
           message: args.message,
         });
 
-        taskRepo.syncFromEvents(args.taskId as string);
+        taskRepo.syncFromEvents(task.id);
 
+        const taskRef = task.seq ? `#${task.seq}` : task.id.slice(0, 8);
         return {
           content: [
             {
               type: "text",
-              text: `Linked commit ${(args.commitSha as string).substring(0, 7)} to task ${args.taskId}`,
+              text: `Linked commit ${(args.commitSha as string).substring(0, 7)} to task ${taskRef} (${task.title})`,
             },
           ],
         };
@@ -960,8 +1134,159 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "pm_git_parse_commit": {
         const message = args.message as string;
+        const projectId = args.projectId as string | undefined;
         const result = parseCommitMessage(message);
+
+        // If projectId provided, resolve issue references to actual tasks
+        if (projectId) {
+          const resolvedTasks: Array<{
+            seq: number;
+            taskId: string;
+            title: string;
+            currentStatus: string;
+            suggestedStatus?: string;
+          }> = [];
+
+          // Collect all issue IDs from magic words
+          const allIssueIds = new Set<number>();
+          for (const mw of result.magicWords) {
+            for (const id of mw.issueIds) {
+              allIssueIds.add(id);
+            }
+          }
+
+          // Resolve each issue ID to a task
+          for (const issueId of allIssueIds) {
+            const task = taskRepo.getBySeq(projectId, issueId);
+            if (task) {
+              // Determine suggested status based on magic words
+              let suggestedStatus: string | undefined;
+              for (const mw of result.magicWords) {
+                if (mw.issueIds.includes(issueId)) {
+                  if (["fixes", "closes", "done"].includes(mw.action)) {
+                    suggestedStatus = "done";
+                  } else if (mw.action === "wip") {
+                    suggestedStatus = "in_progress";
+                  } else if (mw.action === "review") {
+                    suggestedStatus = "in_review";
+                  }
+                }
+              }
+
+              resolvedTasks.push({
+                seq: issueId,
+                taskId: task.id,
+                title: task.title,
+                currentStatus: task.status,
+                suggestedStatus: suggestedStatus !== task.status ? suggestedStatus : undefined,
+              });
+            }
+          }
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ ...result, resolvedTasks }, null, 2),
+              },
+            ],
+          };
+        }
+
         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      }
+
+      case "pm_git_process_commit": {
+        const commitSha = args.commitSha as string;
+        const message = args.message as string;
+        const projectId = args.projectId as string;
+        const branch = args.branch as string | undefined;
+        const dryRun = args.dryRun === true;
+
+        const parsed = parseCommitMessage(message);
+        const actions: Array<{
+          action: string;
+          taskSeq: number;
+          taskId: string;
+          title: string;
+          fromStatus?: string;
+          toStatus?: string;
+          applied: boolean;
+        }> = [];
+
+        // Process magic words
+        for (const mw of parsed.magicWords) {
+          for (const issueId of mw.issueIds) {
+            const task = taskRepo.getBySeq(projectId, issueId);
+            if (!task) continue;
+
+            let toStatus: string | undefined;
+            if (["fixes", "closes", "done"].includes(mw.action)) {
+              toStatus = "done";
+            } else if (mw.action === "wip") {
+              toStatus = "in_progress";
+            } else if (mw.action === "review") {
+              toStatus = "in_review";
+            }
+
+            // Link commit to task
+            if (!dryRun) {
+              createTaskEvent(eventStore, "TaskLinkedToCommit", task.id, {
+                commitSha,
+                branch,
+                message,
+              });
+            }
+
+            actions.push({
+              action: "link_commit",
+              taskSeq: issueId,
+              taskId: task.id,
+              title: task.title,
+              applied: !dryRun,
+            });
+
+            // Update status if needed
+            if (toStatus && toStatus !== task.status) {
+              if (!dryRun) {
+                createTaskEvent(eventStore, "TaskStatusChanged", task.id, {
+                  fromStatus: task.status,
+                  toStatus,
+                  reason: `Magic word: ${mw.action} in commit ${commitSha.slice(0, 7)}`,
+                });
+                taskRepo.syncFromEvents(task.id);
+              }
+
+              actions.push({
+                action: "status_change",
+                taskSeq: issueId,
+                taskId: task.id,
+                title: task.title,
+                fromStatus: task.status,
+                toStatus,
+                applied: !dryRun,
+              });
+            }
+          }
+        }
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  commitSha: commitSha.slice(0, 7),
+                  parsed,
+                  actions,
+                  dryRun,
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
       }
 
       case "pm_git_stats": {
@@ -976,6 +1301,484 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "pm_git_hotspots": {
         const hotspots = await getGitHotspots((args.limit as number) || 10);
         return { content: [{ type: "text", text: JSON.stringify(hotspots, null, 2) }] };
+      }
+
+      // GitHub Integration Handlers
+      case "pm_github_status": {
+        const authenticated = isAuthenticated();
+        const repoInfo = authenticated ? getRepoInfo() : null;
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  authenticated,
+                  repo: repoInfo
+                    ? `${repoInfo.owner}/${repoInfo.repo}`
+                    : null,
+                  message: authenticated
+                    ? repoInfo
+                      ? "GitHub CLI authenticated and repository detected"
+                      : "GitHub CLI authenticated but not in a repository"
+                    : "GitHub CLI not authenticated. Run 'gh auth login' to authenticate.",
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      }
+
+      case "pm_github_issue_create": {
+        // Check GitHub status first
+        if (!isAuthenticated()) {
+          return {
+            content: [{ type: "text", text: "GitHub CLI not authenticated. Run 'gh auth login'." }],
+            isError: true,
+          };
+        }
+
+        const repoInfo = getRepoInfo();
+        if (!repoInfo) {
+          return {
+            content: [{ type: "text", text: "Not in a GitHub repository." }],
+            isError: true,
+          };
+        }
+
+        // Resolve task
+        const taskIdOrSeq = args.taskId as string;
+        const projectId = args.projectId as string | undefined;
+        let task;
+
+        if (projectId && taskIdOrSeq.match(/^#?\d+$/)) {
+          task = taskRepo.findTask(projectId, taskIdOrSeq);
+        } else {
+          task = taskRepo.getById(taskIdOrSeq);
+        }
+
+        if (!task) {
+          return {
+            content: [{ type: "text", text: `Task ${taskIdOrSeq} not found` }],
+            isError: true,
+          };
+        }
+
+        // Check if GitHub is enabled for this project
+        if (!configRepo.isGitHubEnabled(task.project_id)) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `GitHub integration is disabled for this project. Enable with pm_github_config(projectId, "enable")`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        // Create GitHub issue
+        const labels = args.labels as string[] | undefined;
+        const issue = createGitHubIssue({
+          title: task.title,
+          body: task.description || `Task created from PM Plugin\n\nTask ID: ${task.id}`,
+          labels,
+        });
+
+        if (!issue) {
+          return {
+            content: [{ type: "text", text: "Failed to create GitHub issue" }],
+            isError: true,
+          };
+        }
+
+        // Link issue to task (store in linked_prs field for now)
+        createTaskEvent(eventStore, "TaskLinkedToCommit", task.id, {
+          commitSha: `issue#${issue.number}`,
+          message: `Linked to GitHub issue #${issue.number}`,
+        });
+        taskRepo.syncFromEvents(task.id);
+
+        const taskRef = task.seq ? `#${task.seq}` : task.id.slice(0, 8);
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  success: true,
+                  taskRef,
+                  issueNumber: issue.number,
+                  issueUrl: `https://github.com/${repoInfo.owner}/${repoInfo.repo}/issues/${issue.number}`,
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      }
+
+      case "pm_github_issue_link": {
+        // Check GitHub status first
+        if (!isAuthenticated()) {
+          return {
+            content: [{ type: "text", text: "GitHub CLI not authenticated. Run 'gh auth login'." }],
+            isError: true,
+          };
+        }
+
+        const repoInfo = getRepoInfo();
+        if (!repoInfo) {
+          return {
+            content: [{ type: "text", text: "Not in a GitHub repository." }],
+            isError: true,
+          };
+        }
+
+        // Resolve task
+        const taskIdOrSeq = args.taskId as string;
+        const projectId = args.projectId as string | undefined;
+        const issueNumber = args.issueNumber as number;
+        let task;
+
+        if (projectId && taskIdOrSeq.match(/^#?\d+$/)) {
+          task = taskRepo.findTask(projectId, taskIdOrSeq);
+        } else {
+          task = taskRepo.getById(taskIdOrSeq);
+        }
+
+        if (!task) {
+          return {
+            content: [{ type: "text", text: `Task ${taskIdOrSeq} not found` }],
+            isError: true,
+          };
+        }
+
+        // Check if GitHub is enabled for this project
+        if (!configRepo.isGitHubEnabled(task.project_id)) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `GitHub integration is disabled for this project. Enable with pm_github_config(projectId, "enable")`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        // Verify issue exists
+        const issue = getIssue(issueNumber);
+        if (!issue) {
+          return {
+            content: [{ type: "text", text: `GitHub issue #${issueNumber} not found` }],
+            isError: true,
+          };
+        }
+
+        // Link issue to task
+        createTaskEvent(eventStore, "TaskLinkedToCommit", task.id, {
+          commitSha: `issue#${issueNumber}`,
+          message: `Linked to GitHub issue #${issueNumber}: ${issue.title}`,
+        });
+        taskRepo.syncFromEvents(task.id);
+
+        const taskRef = task.seq ? `#${task.seq}` : task.id.slice(0, 8);
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  success: true,
+                  taskRef,
+                  taskTitle: task.title,
+                  issueNumber: issue.number,
+                  issueTitle: issue.title,
+                  issueState: issue.state,
+                  issueUrl: `https://github.com/${repoInfo.owner}/${repoInfo.repo}/issues/${issueNumber}`,
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      }
+
+      case "pm_github_config": {
+        const projectId = args.projectId as string;
+        const action = args.action as "get" | "enable" | "disable";
+
+        // Verify project exists
+        const project = projectRepo.getById(projectId);
+        if (!project) {
+          return {
+            content: [{ type: "text", text: `Project ${projectId} not found` }],
+            isError: true,
+          };
+        }
+
+        let config;
+        let message: string;
+
+        switch (action) {
+          case "get":
+            config = configRepo.getByProjectId(projectId);
+            message = config
+              ? `GitHub ${config.github_enabled ? "enabled" : "disabled"} for project`
+              : "No GitHub configuration found";
+            break;
+          case "enable":
+            config = configRepo.enableGitHub(projectId);
+            message = "GitHub integration enabled for project";
+            break;
+          case "disable":
+            config = configRepo.disableGitHub(projectId);
+            message = "GitHub integration disabled for project";
+            break;
+        }
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  projectId,
+                  projectName: project.name,
+                  action,
+                  message,
+                  config: config || null,
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      }
+
+      // ============================================
+      // Sync Tools (LEVEL_1 Section 8)
+      // ============================================
+
+      case "pm_sync_pull": {
+        const projectId = args.projectId as string;
+        const dryRun = (args.dryRun as boolean) ?? false;
+
+        // Verify project exists
+        const project = projectRepo.getById(projectId);
+        if (!project) {
+          return {
+            content: [{ type: "text", text: `Project ${projectId} not found` }],
+            isError: true,
+          };
+        }
+
+        // Check GitHub is enabled
+        if (!configRepo.isGitHubEnabled(projectId)) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `GitHub integration is disabled for this project. Enable with pm_github_config(projectId, "enable")`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        // Get current repo info for sync engine
+        const repoInfo = getRepoInfo();
+        if (!repoInfo) {
+          return {
+            content: [{ type: "text", text: "Not in a GitHub repository" }],
+            isError: true,
+          };
+        }
+
+        // Initialize sync engine
+        const syncEngine = new SyncEngine({
+          enabled: true,
+          owner: repoInfo.owner,
+          repo: repoInfo.repo,
+        });
+
+        // Get all local tasks with linked issues
+        const localTasks = taskRepo.list({ projectId }).map((task) => ({
+          id: task.id,
+          title: task.title,
+          description: task.description,
+          status: task.status as "todo" | "in_progress" | "in_review" | "done" | "blocked",
+          issueNumber: task.linked_prs
+            ? parseInt(task.linked_prs.replace("issue#", ""), 10) || undefined
+            : undefined,
+          updatedAt: task.updated_at,
+        }));
+
+        // Perform sync (pull from GitHub)
+        const result = await syncEngine.pullFromGitHub(localTasks);
+
+        if (dryRun) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    dryRun: true,
+                    projectId,
+                    projectName: project.name,
+                    preview: {
+                      wouldSync: result.synced,
+                      wouldCreate: result.created,
+                      wouldUpdate: result.updated,
+                      conflicts: result.conflicts,
+                    },
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+          };
+        }
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  success: result.success,
+                  projectId,
+                  projectName: project.name,
+                  synced: result.synced,
+                  created: result.created,
+                  updated: result.updated,
+                  conflicts: result.conflicts,
+                  errors: result.errors,
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      }
+
+      case "pm_sync_push": {
+        const taskId = args.taskId as string;
+        const projectId = args.projectId as string;
+        const action = args.action as "create" | "update";
+
+        // Verify project exists
+        const project = projectRepo.getById(projectId);
+        if (!project) {
+          return {
+            content: [{ type: "text", text: `Project ${projectId} not found` }],
+            isError: true,
+          };
+        }
+
+        // Check GitHub is enabled
+        if (!configRepo.isGitHubEnabled(projectId)) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `GitHub integration is disabled for this project. Enable with pm_github_config(projectId, "enable")`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        // Resolve task (support #seq format)
+        let task;
+        if (taskId.startsWith("#")) {
+          const seq = parseInt(taskId.slice(1), 10);
+          task = taskRepo.getBySeq(projectId, seq);
+        } else {
+          task = taskRepo.getById(taskId);
+        }
+
+        if (!task) {
+          return {
+            content: [{ type: "text", text: `Task ${taskId} not found` }],
+            isError: true,
+          };
+        }
+
+        // Get current repo info for sync engine
+        const repoInfo = getRepoInfo();
+        if (!repoInfo) {
+          return {
+            content: [{ type: "text", text: "Not in a GitHub repository" }],
+            isError: true,
+          };
+        }
+
+        // Initialize sync engine
+        const syncEngine = new SyncEngine({
+          enabled: true,
+          owner: repoInfo.owner,
+          repo: repoInfo.repo,
+        });
+
+        // Prepare local task for sync
+        const localTask: LocalTask = {
+          id: task.id,
+          title: task.title,
+          description: task.description,
+          status: task.status as "todo" | "in_progress" | "in_review" | "done" | "blocked",
+          issueNumber: task.linked_prs
+            ? parseInt(task.linked_prs.replace("issue#", ""), 10) || undefined
+            : undefined,
+          updatedAt: task.updated_at,
+        };
+
+        // Perform sync (push to GitHub)
+        const result = await syncEngine.pushToGitHub(localTask, action);
+
+        if (result.success && result.issueNumber) {
+          // Update task with issue number if created
+          if (action === "create") {
+            createTaskEvent(eventStore, "TaskLinkedToCommit", task.id, {
+              commitSha: `issue#${result.issueNumber}`,
+              message: `Synced to GitHub issue #${result.issueNumber}`,
+            });
+            taskRepo.syncFromEvents(task.id);
+          }
+        }
+
+        const taskRef = task.seq ? `#${task.seq}` : task.id.slice(0, 8);
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  success: result.success,
+                  taskId: task.id,
+                  taskRef,
+                  action,
+                  issueNumber: result.issueNumber,
+                  error: result.error,
+                  projectId,
+                  projectName: project.name,
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
       }
 
       default:
@@ -1213,6 +2016,9 @@ async function main() {
   sprintRepo = new SprintRepository(dbManager, eventStore);
   taskRepo = new TaskRepository(dbManager, eventStore);
   analyticsRepo = new AnalyticsRepository(dbManager);
+  configRepo = new ProjectConfigRepository(dbManager);
+  // Reserved for Phase 3+ (offline sync queue)
+  // syncQueueRepo = new SyncQueueRepository(dbManager);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

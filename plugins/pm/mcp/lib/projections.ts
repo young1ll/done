@@ -39,6 +39,7 @@ export interface Sprint {
 
 export interface Task {
   id: string;
+  seq?: number;                    // Project-scoped numeric ID (e.g., #42)
   project_id: string;
   sprint_id?: string;
   parent_id?: string;
@@ -317,22 +318,62 @@ export class TaskRepository {
   constructor(private db: DatabaseManager, private eventStore: EventStore) {}
 
   /**
+   * Get the next sequence number for a project
+   */
+  private getNextSeq(projectId: string): number {
+    const result = this.db.queryOne<{ max_seq: number | null }>(
+      `SELECT MAX(seq) as max_seq FROM tasks WHERE project_id = ?`,
+      [projectId]
+    );
+    return (result?.max_seq || 0) + 1;
+  }
+
+  /**
+   * Get task by seq number within a project
+   */
+  getBySeq(projectId: string, seq: number): Task | undefined {
+    return this.db.queryOne<Task>(
+      `SELECT * FROM tasks WHERE project_id = ? AND seq = ?`,
+      [projectId, seq]
+    );
+  }
+
+  /**
+   * Find task by ID or seq number (hybrid lookup)
+   * Supports: UUID, seq number, or #seq format
+   */
+  findTask(projectId: string, idOrSeq: string): Task | undefined {
+    // Check if it's a #seq format
+    const seqMatch = idOrSeq.match(/^#?(\d+)$/);
+    if (seqMatch) {
+      return this.getBySeq(projectId, parseInt(seqMatch[1], 10));
+    }
+    // Otherwise treat as UUID
+    return this.getById(idOrSeq);
+  }
+
+  /**
    * Sync task projection from event store
    */
   syncFromEvents(taskId: string): Task | undefined {
     const projection = this.eventStore.replay("task", taskId, taskReducer);
     if (!projection) return undefined;
 
+    // Check if task already exists (for seq assignment)
+    const existing = this.getById(taskId);
+    const seq = existing?.seq ?? this.getNextSeq(projection.projectId);
+
     // Upsert projection
     this.db.execute(
       `INSERT OR REPLACE INTO tasks
-       (id, project_id, sprint_id, parent_id, title, description, status, priority, type,
+       (id, seq, project_id, sprint_id, parent_id, title, description, status, priority, type,
         estimate_points, estimate_hours, actual_hours, assignee, labels, due_date,
         blocked_by, branch_name, linked_commits, linked_prs, created_at, updated_at,
         started_at, completed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         projection.id,
+        seq,
         projection.projectId,
         projection.sprintId || null,
         projection.parentId || null,
@@ -574,5 +615,233 @@ export class AnalyticsRepository {
     }
 
     return burndown;
+  }
+}
+
+// ============================================
+// Project Config Repository
+// ============================================
+
+export interface ProjectConfig {
+  id: number;
+  project_id: string;
+  github_enabled: boolean;
+  github_project_id?: string;
+  github_project_number?: number;
+  field_mappings?: string;
+  status_options?: string;
+  sync_mode: string;
+  last_sync_at?: string;
+  last_sync_cursor?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export class ProjectConfigRepository {
+  constructor(private db: DatabaseManager) {}
+
+  getByProjectId(projectId: string): ProjectConfig | undefined {
+    return this.db.queryOne<ProjectConfig>(
+      `SELECT * FROM project_config WHERE project_id = ?`,
+      [projectId]
+    );
+  }
+
+  isGitHubEnabled(projectId: string): boolean {
+    const config = this.getByProjectId(projectId);
+    return config?.github_enabled === true;
+  }
+
+  create(projectId: string, config: Partial<ProjectConfig> = {}): ProjectConfig | undefined {
+    this.db.execute(
+      `INSERT INTO project_config (project_id, github_enabled, sync_mode)
+       VALUES (?, ?, ?)
+       ON CONFLICT(project_id) DO UPDATE SET
+         github_enabled = excluded.github_enabled,
+         sync_mode = excluded.sync_mode`,
+      [projectId, config.github_enabled ? 1 : 0, config.sync_mode || "read_only"]
+    );
+    return this.getByProjectId(projectId);
+  }
+
+  update(projectId: string, updates: Partial<ProjectConfig>): ProjectConfig | undefined {
+    const sets: string[] = [];
+    const values: unknown[] = [];
+
+    if (updates.github_enabled !== undefined) {
+      sets.push("github_enabled = ?");
+      values.push(updates.github_enabled ? 1 : 0);
+    }
+    if (updates.github_project_id !== undefined) {
+      sets.push("github_project_id = ?");
+      values.push(updates.github_project_id);
+    }
+    if (updates.github_project_number !== undefined) {
+      sets.push("github_project_number = ?");
+      values.push(updates.github_project_number);
+    }
+    if (updates.sync_mode !== undefined) {
+      sets.push("sync_mode = ?");
+      values.push(updates.sync_mode);
+    }
+    if (updates.last_sync_at !== undefined) {
+      sets.push("last_sync_at = ?");
+      values.push(updates.last_sync_at);
+    }
+
+    if (sets.length === 0) return this.getByProjectId(projectId);
+
+    values.push(projectId);
+    this.db.execute(
+      `UPDATE project_config SET ${sets.join(", ")} WHERE project_id = ?`,
+      values
+    );
+
+    return this.getByProjectId(projectId);
+  }
+
+  enableGitHub(projectId: string): ProjectConfig | undefined {
+    // Create config if not exists
+    const existing = this.getByProjectId(projectId);
+    if (!existing) {
+      return this.create(projectId, { github_enabled: true });
+    }
+    return this.update(projectId, { github_enabled: true });
+  }
+
+  disableGitHub(projectId: string): ProjectConfig | undefined {
+    return this.update(projectId, { github_enabled: false });
+  }
+}
+
+// ============================================
+// Sync Queue Repository
+// ============================================
+
+export interface SyncQueueItem {
+  id: number;
+  action: string;          // create_issue, update_status, sync_task, etc.
+  entity_type: string;     // task, sprint, project
+  entity_id: string;
+  payload: string;         // JSON payload
+  status: "pending" | "processing" | "completed" | "failed";
+  retry_count: number;
+  error_message?: string;
+  created_at: string;
+  processed_at?: string;
+}
+
+export class SyncQueueRepository {
+  constructor(private db: DatabaseManager) {}
+
+  /**
+   * Add item to sync queue
+   */
+  enqueue(
+    action: string,
+    entityType: string,
+    entityId: string,
+    payload: Record<string, unknown>
+  ): SyncQueueItem | undefined {
+    this.db.execute(
+      `INSERT INTO sync_queue (action, entity_type, entity_id, payload, status)
+       VALUES (?, ?, ?, ?, 'pending')`,
+      [action, entityType, entityId, JSON.stringify(payload)]
+    );
+    return this.db.queryOne<SyncQueueItem>(
+      `SELECT * FROM sync_queue WHERE entity_type = ? AND entity_id = ? ORDER BY id DESC LIMIT 1`,
+      [entityType, entityId]
+    );
+  }
+
+  /**
+   * Get pending items (for processing)
+   */
+  getPending(limit = 10): SyncQueueItem[] {
+    return this.db.query<SyncQueueItem>(
+      `SELECT * FROM sync_queue WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?`,
+      [limit]
+    );
+  }
+
+  /**
+   * Get all items for an entity
+   */
+  getByEntity(entityType: string, entityId: string): SyncQueueItem[] {
+    return this.db.query<SyncQueueItem>(
+      `SELECT * FROM sync_queue WHERE entity_type = ? AND entity_id = ? ORDER BY created_at DESC`,
+      [entityType, entityId]
+    );
+  }
+
+  /**
+   * Mark item as processing
+   */
+  markProcessing(id: number): void {
+    this.db.execute(
+      `UPDATE sync_queue SET status = 'processing' WHERE id = ?`,
+      [id]
+    );
+  }
+
+  /**
+   * Mark item as completed
+   */
+  markCompleted(id: number): void {
+    this.db.execute(
+      `UPDATE sync_queue SET status = 'completed', processed_at = datetime('now') WHERE id = ?`,
+      [id]
+    );
+  }
+
+  /**
+   * Mark item as failed
+   */
+  markFailed(id: number, errorMessage: string): void {
+    this.db.execute(
+      `UPDATE sync_queue SET status = 'failed', retry_count = retry_count + 1, error_message = ? WHERE id = ?`,
+      [errorMessage, id]
+    );
+  }
+
+  /**
+   * Retry failed item (reset to pending)
+   */
+  retry(id: number): void {
+    this.db.execute(
+      `UPDATE sync_queue SET status = 'pending', error_message = NULL WHERE id = ? AND status = 'failed'`,
+      [id]
+    );
+  }
+
+  /**
+   * Get queue statistics
+   */
+  getStats(): { pending: number; processing: number; completed: number; failed: number } {
+    const result = this.db.queryOne<{
+      pending: number;
+      processing: number;
+      completed: number;
+      failed: number;
+    }>(
+      `SELECT
+         SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+         SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) as processing,
+         SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+         SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
+       FROM sync_queue`
+    );
+    return result || { pending: 0, processing: 0, completed: 0, failed: 0 };
+  }
+
+  /**
+   * Clear completed items older than specified days
+   */
+  clearOld(daysOld = 7): number {
+    const result = this.db.execute(
+      `DELETE FROM sync_queue WHERE status = 'completed' AND processed_at < datetime('now', '-' || ? || ' days')`,
+      [daysOld]
+    );
+    return result.changes;
   }
 }
