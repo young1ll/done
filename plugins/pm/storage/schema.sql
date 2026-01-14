@@ -1,5 +1,31 @@
 -- PM Plugin SQLite Schema
 -- Event Sourcing + CQRS Pattern
+--
+-- ============================================
+-- TABLE STATUS OVERVIEW
+-- ============================================
+--
+-- ACTIVE (used by MCP server):
+--   - events          : Event store (append-only)
+--   - projects        : Project entities
+--   - sprints         : Sprint entities
+--   - tasks           : Task entities (with seq for numeric ID)
+--   - velocity_history: Sprint velocity tracking
+--
+-- RESERVED (for future features - Phase 3+):
+--   - task_dependencies  : Task dependency tracking
+--   - git_events         : Git event tracking
+--   - sync_queue         : Offline-first sync queue
+--   - project_config     : GitHub integration settings
+--   - code_analysis_cache: Code hotspot caching
+--   - releases           : Release management
+--   - estimation_accuracy: Reflexion learning
+--   - episodic_memory    : Reflexion memory
+--   - session_summaries  : Token efficiency
+--   - commits            : Git commit tracking
+--   - pull_requests      : PR tracking
+--
+-- ============================================
 
 -- ============================================
 -- Core Tables (Event Store)
@@ -58,6 +84,7 @@ CREATE INDEX IF NOT EXISTS idx_sprints_status ON sprints(status);
 -- Tasks
 CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY,
+    seq INTEGER,                             -- Project-scoped numeric ID (e.g., #42)
     project_id TEXT NOT NULL REFERENCES projects(id),
     sprint_id TEXT REFERENCES sprints(id),
     parent_id TEXT REFERENCES tasks(id),     -- Subtask support
@@ -96,6 +123,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_sprint ON tasks(sprint_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_type ON tasks(type);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_project_seq ON tasks(project_id, seq);
 
 -- Task Dependencies
 CREATE TABLE IF NOT EXISTS task_dependencies (

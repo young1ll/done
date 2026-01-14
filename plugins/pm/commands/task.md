@@ -8,6 +8,15 @@ allowed-tools: [pm_task_create, pm_task_list, pm_task_get, pm_task_update, pm_ta
 
 Git-First 워크플로우 기반 태스크 관리.
 
+## ID 체계
+
+태스크는 **하이브리드 ID 체계**를 사용합니다:
+
+- **UUID**: 내부적으로 사용되는 고유 식별자
+- **seq**: 프로젝트별 순차 번호 (`#1`, `#2`, `#42`)
+
+사용자 친화적인 `#seq` 형식으로 태스크를 참조하면서, 내부적으로는 UUID로 관리됩니다.
+
 ## Usage
 
 ```bash

@@ -102,6 +102,7 @@ function initializeProjectionsSchema(db: DatabaseManager): void {
     -- Tasks table (matches Task interface in projections.ts)
     CREATE TABLE IF NOT EXISTS tasks (
       id TEXT PRIMARY KEY,
+      seq INTEGER,
       project_id TEXT REFERENCES projects(id),
       sprint_id TEXT REFERENCES sprints(id),
       parent_id TEXT REFERENCES tasks(id),
@@ -150,6 +151,7 @@ function initializeProjectionsSchema(db: DatabaseManager): void {
     CREATE INDEX IF NOT EXISTS idx_tasks_sprint ON tasks(sprint_id);
     CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
     CREATE INDEX IF NOT EXISTS idx_sprints_project ON sprints(project_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_project_seq ON tasks(project_id, seq);
   `);
 }
 

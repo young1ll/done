@@ -1,10 +1,24 @@
 /**
  * PM Plugin Git Utilities
  *
- * Git integration utilities for LEVEL_1 implementation:
- * - Branch name parsing
- * - Commit message parsing (Conventional Commits + Magic Words)
- * - Git command helpers
+ * @deprecated LEVEL_2 Issue #4 Resolution
+ * =========================================
+ * All functions in this file have been consolidated into mcp/lib/server-helpers.ts.
+ * This file is kept for backward compatibility only.
+ *
+ * Migration Guide:
+ * - parseBranchName → import from "mcp/lib/server-helpers.js"
+ * - parseCommitMessage → import from "mcp/lib/server-helpers.js"
+ * - generateBranchName → import from "mcp/lib/server-helpers.js"
+ * - getCurrentBranch → import from "mcp/lib/server-helpers.js"
+ * - getGitStatus → import from "mcp/lib/server-helpers.js"
+ * - getMagicWordStatusChange → import from "mcp/lib/server-helpers.js"
+ * - isGitRepository → import from "mcp/lib/server-helpers.js"
+ * - getGitRoot → import from "mcp/lib/server-helpers.js"
+ * - getHotspots → use getGitHotspots from "mcp/lib/server-helpers.js"
+ * - getCommitStats → use getGitStats from "mcp/lib/server-helpers.js"
+ *
+ * This file will be removed in future releases.
  */
 
 import { execSync } from "child_process";

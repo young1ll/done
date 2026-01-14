@@ -4,7 +4,7 @@
  * Pure functions extracted from server.ts for testability.
  */
 
-import { execSync } from "child_process";
+import { execSync, execFileSync } from "child_process";
 
 // ============================================
 // Commit Message Parsing
@@ -181,6 +181,7 @@ export function getGitStatus(): {
 
 /**
  * Get git commit statistics
+ * Uses execFileSync to prevent shell injection
  */
 export function getGitStats(
   from?: string,
@@ -197,15 +198,17 @@ export function getGitStats(
   try {
     const range =
       from && to ? `${from}..${to}` : from ? `${from}..HEAD` : "HEAD~30..HEAD";
-    const authorFilter = author ? `--author="${author}"` : "";
 
-    const log = execSync(
-      `git log ${range} ${authorFilter} --shortstat --format="%H|%an|%ae|%s"`,
-      {
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-      }
-    );
+    // Build args array to prevent shell injection
+    const args = ["log", range, "--shortstat", "--format=%H|%an|%ae|%s"];
+    if (author) {
+      args.push(`--author=${author}`);
+    }
+
+    const log = execFileSync("git", args, {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
 
     const commits: {
       sha: string;
@@ -256,40 +259,106 @@ export function getGitStats(
 
 /**
  * Get frequently changed files (hotspots)
+ * Uses execFileSync to prevent shell injection
  */
 export function getGitHotspots(
   limit: number = 10
 ): { file: string; changes: number; risk: string }[] {
   try {
-    const result = execSync(
-      `git log --pretty=format: --name-only HEAD~100..HEAD | sort | uniq -c | sort -rn | head -${limit}`,
+    // Validate limit to prevent issues
+    const safeLimit = Math.max(1, Math.min(Math.floor(limit), 100));
+
+    // Get file names from git log using execFileSync (safe)
+    const gitOutput = execFileSync(
+      "git",
+      ["log", "--pretty=format:", "--name-only", "HEAD~100..HEAD"],
       {
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
       }
     );
 
-    return result
+    // Process in JavaScript instead of shell pipeline
+    const fileCount = new Map<string, number>();
+    gitOutput
       .split("\n")
       .filter(Boolean)
-      .map((line) => {
-        const match = line.trim().match(/^(\d+)\s+(.+)$/);
-        if (match) {
-          const changes = parseInt(match[1], 10);
-          return {
-            file: match[2],
-            changes,
-            risk: changes > 20 ? "high" : changes > 10 ? "medium" : "low",
-          };
-        }
-        return null;
-      })
-      .filter((item): item is { file: string; changes: number; risk: string } =>
-        item !== null
-      );
+      .forEach((file) => {
+        fileCount.set(file, (fileCount.get(file) || 0) + 1);
+      });
+
+    // Sort by count and take top N
+    const sorted = Array.from(fileCount.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, safeLimit);
+
+    return sorted.map(([file, changes]) => ({
+      file,
+      changes,
+      risk: changes > 20 ? "high" : changes > 10 ? "medium" : "low",
+    }));
   } catch {
     return [];
   }
+}
+
+/**
+ * Check if we're in a git repository
+ */
+export function isGitRepository(): boolean {
+  try {
+    execFileSync("git", ["rev-parse", "--git-dir"], {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Get the root directory of the git repository
+ */
+export function getGitRoot(): string | null {
+  try {
+    return execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Get the status change implied by magic words
+ */
+export function getMagicWordStatusChange(
+  magicWords: { action: string; issueIds: number[] }[]
+): Map<number, string> {
+  const changes = new Map<number, string>();
+
+  for (const mw of magicWords) {
+    for (const issueId of mw.issueIds) {
+      switch (mw.action) {
+        case "fixes":
+        case "closes":
+        case "done":
+          changes.set(issueId, "done");
+          break;
+        case "wip":
+          changes.set(issueId, "in_progress");
+          break;
+        case "review":
+          changes.set(issueId, "in_review");
+          break;
+        // refs, blocks, depends don't change status
+      }
+    }
+  }
+
+  return changes;
 }
 
 // ============================================

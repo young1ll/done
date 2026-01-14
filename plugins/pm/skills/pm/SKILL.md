@@ -8,7 +8,7 @@ description: |
 
 # Project Management Skill
 
-MCP 통합 프로젝트 관리 스킬. CORE.md 설계 원칙 기반.
+MCP 통합 프로젝트 관리 스킬. LEVEL_1 Git-First 설계 원칙 기반.
 
 ## 아키텍처
 
@@ -57,8 +57,8 @@ MCP 기반 프로젝트 관리. 이벤트 소싱 + 하이브리드 에이전트.
    ticket-worker         이슈 구현
 
 🔗 Git 통합
-   브랜치: PM-123-description
-   커밋: fixes PM-123, refs PM-123
+   브랜치: {seq}-{type}-{description}
+   커밋: fixes #42, refs #42, wip #42
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 💡 Quick Start
@@ -77,22 +77,33 @@ MCP 기반 프로젝트 관리. 이벤트 소싱 + 하이브리드 에이전트.
 |-----|------|
 | `pm://schema/task` | 태스크 스키마 |
 | `pm://schema/sprint` | 스프린트 스키마 |
-| `pm://meta/velocity` | 속도 계산 방법 |
+| `pm://meta/velocity-method` | 속도 계산 방법 |
 | `pm://docs/conventions` | PM 컨벤션 |
+| `pm://config` | 프로젝트 설정 |
+| `pm://context/active` | 활성 컨텍스트 |
+| `pm://git/status` | Git 저장소 상태 |
 
 ### Tools (동적)
 
 ```typescript
+// 프로젝트
+pm_project_create(name, description?)
+pm_project_list()
+
 // 태스크 CRUD
-pm_task_create(title, projectId, type?, priority?, points?)
-pm_task_list(filter?)
+pm_task_create(title, projectId, type?, priority?, estimatePoints?, sprintId?)
+pm_task_list(projectId?, sprintId?, status?, assignee?, type?, priority?, limit?, offset?)
 pm_task_get(taskId)
-pm_task_update(taskId, updates)
+pm_task_update(taskId, title?, description?, status?, priority?, estimatePoints?, assignee?)
 pm_task_status(taskId, status, reason?)
+pm_task_board(projectId, sprintId?)
 
 // 스프린트
-pm_sprint_create(name, startDate, endDate, goal?)
-pm_sprint_status(sprintId?)
+pm_sprint_create(name, projectId, startDate, endDate, goal?)
+pm_sprint_list(projectId)
+pm_sprint_status(sprintId)
+pm_sprint_start(sprintId)
+pm_sprint_complete(sprintId)
 pm_sprint_add_tasks(sprintId, taskIds)
 
 // 분석
@@ -100,8 +111,23 @@ pm_velocity_calculate(projectId, sprintCount?)
 pm_burndown_data(sprintId)
 
 // Git 통합
-pm_link_commit(taskId, commitSha, branch?)
-pm_task_from_branch()
+pm_git_branch_create(taskId, type?)
+pm_git_commit_link(taskId, commitSha, projectId?, branch?, message?)  // #seq 지원
+pm_git_parse_branch()
+pm_git_parse_commit(message, projectId?)  // 태스크 조회 + 상태변경 제안
+pm_git_process_commit(commitSha, message, projectId, branch?, dryRun?)  // 자동 처리
+pm_git_stats(from?, to?, author?)
+pm_git_hotspots(limit?)
+
+// GitHub 통합
+pm_github_status()  // GitHub CLI 인증 및 저장소 상태
+pm_github_config(projectId, action)  // 프로젝트별 GitHub 설정 (get/enable/disable)
+pm_github_issue_create(taskId, projectId?, labels?)  // 태스크 → Issue 생성
+pm_github_issue_link(taskId, issueNumber, projectId?)  // 기존 Issue 연결
+
+// 양방향 동기화
+pm_sync_pull(projectId, dryRun?)  // GitHub Issues → 로컬 태스크 동기화
+pm_sync_push(taskId, projectId, action)  // 로컬 태스크 → GitHub Issues (create/update)
 ```
 
 ### Prompts (템플릿)
@@ -109,9 +135,10 @@ pm_task_from_branch()
 | Prompt | 설명 |
 |--------|------|
 | `sprint-planning` | 스프린트 계획 세션 |
-| `retrospective` | 회고 세션 |
+| `retrospective` | 회고 세션 + Git 분석 |
 | `daily-standup` | 데일리 스탠드업 |
-| `risk-assessment` | 리스크 평가 |
+| `risk-assessment` | 리스크 평가 + 핫스팟 |
+| `release-plan` | 릴리스 계획 + 체인지로그 |
 
 ---
 
@@ -180,20 +207,27 @@ Thought → Action → Observation → 반복
 
 ---
 
-## Git 통합
+## Git 통합 (LEVEL_1)
 
 ### 브랜치 명명
 
 ```
-PM-123-feature-description
+{seq}-{type}-{description}
+
+예시:
+  42-feat-user-authentication
+  43-fix-login-bug
+  44-refactor-api-client
 ```
 
 ### Magic Words
 
 ```
-fixes PM-123    # 태스크 완료
-closes PM-123   # 태스크 완료
-refs PM-123     # 링크만 (상태 유지)
+fixes #42      # 태스크 완료 (PR 머지 시)
+closes #42     # 태스크 완료
+refs #42       # 링크만 (상태 유지)
+wip #42        # in_progress 상태로 변경
+review #42     # in_review 상태로 변경
 ```
 
 ### 훅

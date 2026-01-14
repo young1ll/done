@@ -5,11 +5,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { execSync } from "child_process";
+import { execSync, execFileSync } from "child_process";
 
 // Mock child_process
 vi.mock("child_process", () => ({
   execSync: vi.fn(),
+  execFileSync: vi.fn(),
 }));
 
 // Import after mocking
@@ -35,6 +36,7 @@ import {
 } from "../../mcp/lib/server-helpers.js";
 
 const mockedExecSync = vi.mocked(execSync);
+const mockedExecFileSync = vi.mocked(execFileSync);
 
 describe("parseCommitMessage", () => {
   describe("Conventional Commits", () => {
@@ -333,7 +335,8 @@ describe("getGitStats", () => {
   });
 
   it("should return git stats", () => {
-    mockedExecSync.mockReturnValue(
+    // Now uses execFileSync instead of execSync for security
+    mockedExecFileSync.mockReturnValue(
       "abc1234|John|john@example.com|feat: feature\n" +
       " 10 insertions(+), 5 deletions(-)\n" +
       "def5678|Jane|jane@example.com|fix: bug\n" +
@@ -349,31 +352,33 @@ describe("getGitStats", () => {
   });
 
   it("should use default range", () => {
-    mockedExecSync.mockReturnValue("");
+    mockedExecFileSync.mockReturnValue("");
     getGitStats();
 
-    const call = mockedExecSync.mock.calls[0][0] as string;
-    expect(call).toContain("HEAD~30..HEAD");
+    // execFileSync is called with (command, args, options)
+    const args = mockedExecFileSync.mock.calls[0][1] as string[];
+    expect(args).toContain("HEAD~30..HEAD");
   });
 
   it("should use custom range", () => {
-    mockedExecSync.mockReturnValue("");
+    mockedExecFileSync.mockReturnValue("");
     getGitStats("v1.0", "v2.0");
 
-    const call = mockedExecSync.mock.calls[0][0] as string;
-    expect(call).toContain("v1.0..v2.0");
+    const args = mockedExecFileSync.mock.calls[0][1] as string[];
+    expect(args).toContain("v1.0..v2.0");
   });
 
   it("should filter by author", () => {
-    mockedExecSync.mockReturnValue("");
+    mockedExecFileSync.mockReturnValue("");
     getGitStats(undefined, undefined, "John");
 
-    const call = mockedExecSync.mock.calls[0][0] as string;
-    expect(call).toContain('--author="John"');
+    // Author filter is now passed as array element (safe from injection)
+    const args = mockedExecFileSync.mock.calls[0][1] as string[];
+    expect(args).toContain("--author=John");
   });
 
   it("should return error on failure", () => {
-    mockedExecSync.mockImplementation(() => {
+    mockedExecFileSync.mockImplementation(() => {
       throw new Error("Git error");
     });
 
@@ -390,30 +395,43 @@ describe("getGitHotspots", () => {
   });
 
   it("should return hotspots", () => {
-    mockedExecSync.mockReturnValue(
-      "  25 src/core.ts\n" +
-      "  15 src/utils.ts\n" +
-      "   5 README.md\n"
+    // Now uses execFileSync and processes in JavaScript instead of shell pipeline
+    mockedExecFileSync.mockReturnValue(
+      "src/core.ts\n" +
+      "src/core.ts\n" +
+      "src/core.ts\n" +
+      "src/utils.ts\n" +
+      "src/utils.ts\n" +
+      "README.md\n"
     );
 
     const result = getGitHotspots(10);
 
     expect(result).toHaveLength(3);
-    expect(result[0]).toEqual({ file: "src/core.ts", changes: 25, risk: "high" });
-    expect(result[1]).toEqual({ file: "src/utils.ts", changes: 15, risk: "medium" });
-    expect(result[2]).toEqual({ file: "README.md", changes: 5, risk: "low" });
+    // 3 changes = low, 2 changes = low, 1 change = low
+    expect(result[0]).toEqual({ file: "src/core.ts", changes: 3, risk: "low" });
+    expect(result[1]).toEqual({ file: "src/utils.ts", changes: 2, risk: "low" });
+    expect(result[2]).toEqual({ file: "README.md", changes: 1, risk: "low" });
   });
 
-  it("should pass limit to command", () => {
-    mockedExecSync.mockReturnValue("");
-    getGitHotspots(5);
+  it("should respect limit parameter", () => {
+    // Generate many file entries
+    mockedExecFileSync.mockReturnValue(
+      "file1.ts\nfile1.ts\nfile1.ts\n" +
+      "file2.ts\nfile2.ts\n" +
+      "file3.ts\n"
+    );
 
-    const call = mockedExecSync.mock.calls[0][0] as string;
-    expect(call).toContain("head -5");
+    const result = getGitHotspots(2);
+
+    // Only top 2 results
+    expect(result).toHaveLength(2);
+    expect(result[0].file).toBe("file1.ts");
+    expect(result[1].file).toBe("file2.ts");
   });
 
   it("should return empty on error", () => {
-    mockedExecSync.mockImplementation(() => {
+    mockedExecFileSync.mockImplementation(() => {
       throw new Error("Git error");
     });
 
@@ -423,9 +441,25 @@ describe("getGitHotspots", () => {
   });
 
   it("should handle empty output", () => {
-    mockedExecSync.mockReturnValue("");
+    mockedExecFileSync.mockReturnValue("");
     const result = getGitHotspots();
     expect(result).toEqual([]);
+  });
+
+  it("should assign risk levels correctly", () => {
+    // Create enough entries to hit different risk thresholds
+    const entries: string[] = [];
+    for (let i = 0; i < 25; i++) entries.push("high-risk.ts");
+    for (let i = 0; i < 15; i++) entries.push("medium-risk.ts");
+    for (let i = 0; i < 5; i++) entries.push("low-risk.ts");
+
+    mockedExecFileSync.mockReturnValue(entries.join("\n"));
+
+    const result = getGitHotspots(10);
+
+    expect(result[0]).toEqual({ file: "high-risk.ts", changes: 25, risk: "high" });
+    expect(result[1]).toEqual({ file: "medium-risk.ts", changes: 15, risk: "medium" });
+    expect(result[2]).toEqual({ file: "low-risk.ts", changes: 5, risk: "low" });
   });
 });
 

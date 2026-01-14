@@ -1,16 +1,16 @@
 # PM Plugin for Claude Code
 
-AI 기반 프로젝트 관리 플러그인.
+AI 기반 프로젝트 관리 플러그인. LEVEL_1 Git-First 아키텍처.
 
 **Plan-and-Execute**, **ReAct**, **Reflexion** 패턴을 결합한 하이브리드 에이전트 아키텍처로
 MCP 서버를 통해 프로젝트 관리 데이터와 통합됩니다.
 
 ## 핵심 특징
 
-- **MCP 통합**: Resources/Tools/Prompts 패턴으로 98.7% 토큰 절감
+- **Git-First**: GitHub Flow 기반 LEVEL_1 아키텍처
+- **MCP 통합**: 7 Resources, 21 Tools, 5 Prompts
 - **이벤트 소싱**: 완전한 감사 추적 및 시점별 상태 재구성
-- **하이브리드 에이전트**: 전략적 계획 + 적응적 실행 + 자기 개선
-- **Git 통합**: Linear/GitHub 스타일 브랜치 명명 및 magic words
+- **하이브리드 에이전트**: 4개 에이전트 (Plan-and-Execute + ReAct + Reflexion)
 - **토큰 효율화**: 계층적 요약 (L0-L3) 및 70% 압축 규칙
 
 ## 설치
@@ -20,60 +20,107 @@ MCP 서버를 통해 프로젝트 관리 데이터와 통합됩니다.
 /plugins add pm@done
 ```
 
+## 빠른 시작
+
+```bash
+# 1. 프로젝트 초기화
+/pm:init
+
+# 2. 태스크 생성
+/pm:task create "사용자 인증 구현"
+
+# 3. 상태 확인
+/pm:status
+```
+
 ## 아키텍처
 
 ```
-Plan-and-Execute (전략적 계획)
+Plan-and-Execute (전략적 계획) → pm-planner
         ↓
-    ReAct (적응적 실행)
+    ReAct (적응적 실행) → pm-executor
         ↓
-   Reflexion (자기 개선)
+   Reflexion (자기 개선) → pm-reflector
         ↓
-    MCP Server (데이터 통합)
+    MCP Server (Resources + Tools + Prompts)
         ↓
-    SQLite (이벤트 소싱)
+    SQLite (이벤트 소싱 + CQRS)
 ```
+
+## 명령어
+
+| 명령어 | 설명 |
+|--------|------|
+| `/pm:init` | 프로젝트 초기화 |
+| `/pm:task <action>` | 태스크 CRUD (create, list, status) |
+| `/pm:sprint <action>` | 스프린트 관리 (create, status, burndown) |
+| `/pm:status` | 전체 현황 대시보드 |
+
+## MCP 리소스
+
+| URI | 설명 |
+|-----|------|
+| `pm://schema/task` | 태스크 스키마 |
+| `pm://schema/sprint` | 스프린트 스키마 |
+| `pm://meta/velocity-method` | 속도 계산 방법 |
+| `pm://docs/conventions` | PM 컨벤션 |
+| `pm://config` | 프로젝트 설정 |
+| `pm://context/active` | 활성 컨텍스트 |
+| `pm://git/status` | Git 상태 |
 
 ## MCP 도구
 
-### Resources (정적)
-```
-pm://schema/task          # 태스크 스키마
-pm://schema/sprint        # 스프린트 스키마
-pm://meta/velocity        # 속도 계산 방법
-pm://docs/conventions     # PM 컨벤션
-```
-
-### Tools (동적)
+### Project
 ```typescript
-// CRUD
-pm_task_create(title, projectId, ...)
-pm_task_list(filter?)
+pm_project_create(name, description?)
+pm_project_list()
+```
+
+### Task
+```typescript
+pm_task_create(title, projectId, type?, priority?, estimatePoints?, sprintId?)
+pm_task_list(projectId?, sprintId?, status?, ...)
 pm_task_get(taskId)
-pm_task_update(taskId, updates)
-pm_task_status(taskId, status)
+pm_task_update(taskId, ...)
+pm_task_status(taskId, status, reason?)
+pm_task_board(projectId, sprintId?)
+```
 
-// Sprint
-pm_sprint_create(name, startDate, endDate)
+### Sprint
+```typescript
+pm_sprint_create(name, projectId, startDate, endDate, goal?)
+pm_sprint_list(projectId)
 pm_sprint_status(sprintId)
-pm_sprint_add_tasks(sprintId, taskIds)
+pm_sprint_start(sprintId)
+pm_sprint_complete(sprintId)
+pm_sprint_add_tasks(sprintId, taskIds[])
+```
 
-// Analytics
-pm_velocity_calculate(projectId)
+### Analytics
+```typescript
+pm_velocity_calculate(projectId, sprintCount?)
 pm_burndown_data(sprintId)
-
-// Git Integration
-pm_link_commit(taskId, commitSha)
-pm_task_from_branch()
 ```
 
-### Prompts (템플릿)
+### Git Integration
+```typescript
+pm_git_branch_create(taskId, type?)
+pm_git_commit_link(taskId, commitSha, branch?, message?)
+pm_git_parse_branch()
+pm_git_parse_commit(message)
+pm_git_stats(from?, to?, author?)
+pm_git_hotspots(limit?)
 ```
-sprint-planning      # 스프린트 계획 세션
-retrospective        # 회고 세션
-daily-standup        # 데일리 스탠드업
-risk-assessment      # 리스크 평가
-```
+
+## MCP 프롬프트
+
+| Prompt | 설명 |
+|--------|------|
+| `sprint-planning` | 스프린트 계획 세션 |
+| `retrospective` | 회고 세션 + Git 분석 |
+| `daily-standup` | 데일리 스탠드업 |
+| `risk-assessment` | 리스크 평가 + 핫스팟 |
+| `release-plan` | 릴리스 계획 + 체인지로그 |
 
 ## 에이전트
 
@@ -82,26 +129,33 @@ risk-assessment      # 리스크 평가
 | `pm-planner` | Plan-and-Execute | 전략적 계획, 스프린트 계획, 에픽 분해 |
 | `pm-executor` | ReAct | 적응적 실행, 백로그 정리, 의존성 조사 |
 | `pm-reflector` | Reflexion | 자기 개선, 추정 보정, 회고 학습 |
-| `ticket-worker` | - | 이슈 구현 |
+| `ticket-worker` | - | 개별 이슈 구현 |
 
-## Git 통합
+## Git 통합 (LEVEL_1)
 
 ### 브랜치 명명
 ```
-PM-123-feature-description
+{issue_id}-{type}-{description}
+# 예: a1b2c3d4-feat-user-authentication
 ```
 
-### Magic Words (커밋 메시지)
+### Magic Words
 ```
-fixes PM-123    # 태스크 자동 완료
-closes PM-123   # 태스크 자동 완료
-refs PM-123     # 태스크 링크 (상태 변경 없음)
+fixes #XX    # 태스크 완료 (PR 머지 시)
+closes #XX   # 태스크 완료
+refs #XX     # 태스크 링크 (상태 변경 없음)
+wip #XX      # in_progress 상태로 변경
+review #XX   # in_review 상태로 변경
 ```
 
 ### 훅
-- **PreToolUse(git commit)**: 태스크 링크 검증
-- **PostToolUse(git commit)**: 커밋 연결 및 magic word 처리
-- **Stop**: 세션 요약 저장
+| 이벤트 | 동작 |
+|--------|------|
+| 브랜치 생성 | LEVEL_1 네이밍 검증, 태스크 상태 업데이트 |
+| 커밋 전 | Conventional Commits 검증 |
+| 커밋 후 | 커밋 링크, Magic words 처리 |
+| 푸시 전 | PR 생성 안내 |
+| 세션 종료 | 세션 요약 저장 |
 
 ## 토큰 효율화
 
@@ -121,14 +175,15 @@ refs PM-123     # 태스크 링크 (상태 변경 없음)
 | Tier | 저장소 | 내용 | 보존 |
 |------|--------|------|------|
 | Hot | 메모리 | 활성 세션, 최근 출력 | 세션 |
-| Warm | SQLite | 히스토리, 스냅샷 | 일~주 |
-| Cold | Vector DB | 임베딩, 아카이브 | 영구 |
+| Warm | SQLite | 히스토리, 이벤트, 스냅샷 | 일~주 |
+| Cold | Vector DB | 임베딩, 아카이브 | 영구 (계획) |
 
 ## 이벤트 타입
 
 ```typescript
-type TaskEvent =
+type TaskEventType =
   | 'TaskCreated'
+  | 'TaskUpdated'
   | 'TaskStatusChanged'
   | 'TaskEstimated'
   | 'TaskLinkedToCommit'
@@ -142,9 +197,10 @@ type TaskEvent =
 
 | 유형 | 테스트 수 | 설명 |
 |------|----------|------|
-| 단위/통합 | 525개 | Mock 기반, 빠른 피드백 |
-| E2E | 44개 | 실제 GitHub CLI, Git, SQLite |
-| **총계** | **569개** | 커버리지 81%+ |
+| Unit | ~200 | 개별 함수/클래스 |
+| Integration | ~325 | Mock 기반 통합 |
+| E2E | ~44 | 실제 GitHub CLI, Git, SQLite |
+| **총계** | **~569** | 커버리지 81%+ |
 
 ### 실행 방법
 
@@ -158,26 +214,15 @@ npm run test:e2e
 # 커버리지 리포트
 npm run test:coverage
 
-# E2E 테스트 리소스 강제 정리
+# E2E 테스트 리소스 정리
 npm run test:e2e:cleanup
 ```
 
-### E2E 테스트
-
-Mock 없이 실제 서비스와 통합 테스트:
-
-- **GitHub CLI**: 이슈 CRUD, 코멘트, 상태 변경
-- **Git 명령어**: 브랜치, 커밋 히스토리, 핫스팟 분석
-- **파일 기반 SQLite**: 실제 DB 파일 생성/삭제
-- **MCP 워크플로우**: 프로젝트 → 태스크 → 스프린트 → 완료
-
-### 요구사항
+### E2E 요구사항
 
 ```bash
-# GitHub CLI 인증 (E2E 테스트용)
+# GitHub CLI 인증
 gh auth login
-
-# 인증 확인
 gh auth status
 ```
 
@@ -187,59 +232,48 @@ gh auth status
 
 ```
 plugins/pm/
-├── .claude-plugin/
-│   ├── plugin.json         # 매니페스트
-│   └── mcp.json            # MCP 설정
-├── mcp/
-│   ├── server.ts           # MCP 서버 진입점
+├── .claude-plugin/           # 플러그인 매니페스트
+│   ├── plugin.json
+│   └── mcp.json
+├── mcp/                      # MCP 서버
+│   ├── server.ts             # 진입점 (Resources, Tools, Prompts)
 │   └── lib/
-│       ├── db.ts           # SQLite 래퍼
-│       ├── repositories.ts # 리포지토리 레이어
-│       └── server-handlers.ts # MCP 핸들러
+│       ├── db.ts             # SQLite 래퍼
+│       ├── projections.ts    # 리포지토리 레이어
+│       └── server-helpers.ts # Git 헬퍼
 ├── storage/
-│   ├── schema.sql          # SQLite 스키마
-│   └── lib/events.ts       # 이벤트 소싱
-├── agents/
-│   ├── pm-planner.md       # Plan-and-Execute
-│   ├── pm-executor.md      # ReAct
-│   ├── pm-reflector.md     # Reflexion
-│   └── ticket-worker.md    # 이슈 구현
-├── commands/
-│   ├── init.md             # /pm:init
-│   ├── task.md             # /pm:task
-│   ├── sprint.md           # /pm:sprint
-│   └── status.md           # /pm:status
-├── skills/pm/
-│   ├── SKILL.md            # 스킬 정의
-│   └── references/         # 템플릿, 스키마
-├── hooks/
-│   ├── hooks.json          # 훅 설정
-│   └── scripts/            # 훅 스크립트
-├── lib/
-│   ├── github.ts           # GitHub CLI 래퍼
-│   ├── git.ts              # Git 명령어 래퍼
-│   └── summarizer.ts       # 토큰 효율화
-├── tests/
-│   ├── unit/               # 단위 테스트
-│   ├── integration/        # 통합 테스트 (Mock 기반)
-│   ├── helpers/            # 테스트 헬퍼
-│   └── e2e/                # E2E 테스트 (실제 API)
-│       ├── config/         # Vitest E2E 설정
-│       ├── helpers/        # E2E 헬퍼
-│       ├── github/         # GitHub CLI 테스트
-│       ├── git/            # Git 명령어 테스트
-│       ├── mcp/            # MCP 워크플로우 테스트
-│       └── integration/    # 동기화 테스트
-├── package.json            # NPM 설정
-├── tsconfig.json           # TypeScript 설정
-├── ARCHITECTURE.md         # 아키텍처 문서
-├── CORE.md                 # 설계 원칙
-└── README.md               # 이 문서
+│   ├── schema.sql            # SQLite 스키마
+│   └── lib/events.ts         # 이벤트 소싱
+├── agents/                   # 에이전트 (4개)
+├── commands/                 # 슬래시 명령어 (4개)
+├── skills/pm/                # PM 스킬 + 템플릿
+├── hooks/                    # 이벤트 훅 (7개)
+├── lib/                      # 공통 유틸리티
+│   ├── github.ts             # GitHub CLI 래퍼
+│   ├── git.ts                # Git 명령어 래퍼
+│   └── sync-engine.ts        # 동기화 엔진
+├── tests/                    # 테스트 (~569개)
+├── package.json
+├── ARCHITECTURE.md           # 상세 아키텍처
+└── README.md                 # 이 문서
+```
+
+## NPM 스크립트
+
+```bash
+npm run build          # TypeScript 컴파일
+npm run dev            # 개발 서버 (tsx watch)
+npm start              # 프로덕션 서버
+npm run db:init        # SQLite DB 초기화
+npm run lint           # ESLint
+npm run typecheck      # 타입 체크
+npm test               # 단위/통합 테스트
+npm run test:e2e       # E2E 테스트
+npm run test:coverage  # 커버리지
 ```
 
 ## 참고 자료
 
-- [CORE.md](./CORE.md) - 설계 원칙 및 연구 기반
 - [ARCHITECTURE.md](./ARCHITECTURE.md) - 상세 아키텍처
 
 ## 라이선스
