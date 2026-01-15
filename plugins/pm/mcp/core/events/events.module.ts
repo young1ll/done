@@ -1,0 +1,12 @@
+import { Module, Global } from '@nestjs/common';
+import { EventStoreService } from './event-store.service.js';
+
+/**
+ * EventsModule provides the EventStoreService globally
+ */
+@Global()
+@Module({
+  providers: [EventStoreService],
+  exports: [EventStoreService],
+})
+export class EventsModule {}
