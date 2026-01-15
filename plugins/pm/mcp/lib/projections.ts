@@ -98,13 +98,16 @@ export class ProjectRepository {
     const events = this.eventStore.getEvents("project", projectId);
     if (events.length === 0) return undefined;
 
-    const state = events.reduce((acc, event) => {
-      return {
-        ...acc,
-        ...event.payload,
-        id: projectId,
-      };
-    }, {});
+    const state = events.reduce(
+      (acc, event) => {
+        return {
+          ...acc,
+          ...event.payload,
+          id: projectId,
+        };
+      },
+      {} as Record<string, unknown>
+    );
 
     // Upsert to database
     this.db.execute(
@@ -128,15 +131,15 @@ export class ProjectRepository {
   }
 
   getById(id: string): Project | undefined {
-    return this.db.get<Project>("SELECT * FROM projects WHERE id = ?", [id]);
+    return this.db.queryOne<Project>("SELECT * FROM projects WHERE id = ?", [id]);
   }
 
   getByName(name: string): Project | undefined {
-    return this.db.get<Project>("SELECT * FROM projects WHERE name = ?", [name]);
+    return this.db.queryOne<Project>("SELECT * FROM projects WHERE name = ?", [name]);
   }
 
   list(): Project[] {
-    return this.db.all<Project>("SELECT * FROM projects ORDER BY created_at DESC", []);
+    return this.db.query<Project>("SELECT * FROM projects ORDER BY created_at DESC", []);
   }
 
   update(id: string, updates: Partial<Project>): Project | undefined {
@@ -183,18 +186,14 @@ export class TaskRepository {
     const events = this.eventStore.getEvents("task", taskId);
     if (events.length === 0) return undefined;
 
-    const state = events.reduce(taskReducer, {
-      id: taskId,
-      project_id: "",
-      title: "",
-      status: "todo",
-      priority: "medium",
-      type: "task",
-    });
+    const state = events.reduce(
+      taskReducer,
+      null
+    ) as Task & { project_id: string };
 
     // Get next seq for project if not set
     if (!state.seq) {
-      const maxSeq = this.db.get<{ max_seq: number | null }>(
+      const maxSeq = this.db.queryOne<{ max_seq: number | null }>(
         "SELECT MAX(seq) as max_seq FROM tasks WHERE project_id = ?",
         [state.project_id]
       );
@@ -267,11 +266,11 @@ export class TaskRepository {
   }
 
   getById(id: string): Task | undefined {
-    return this.db.get<Task>("SELECT * FROM tasks WHERE id = ?", [id]);
+    return this.db.queryOne<Task>("SELECT * FROM tasks WHERE id = ?", [id]);
   }
 
   getBySeq(projectId: string, seq: number): Task | undefined {
-    return this.db.get<Task>(
+    return this.db.queryOne<Task>(
       "SELECT * FROM tasks WHERE project_id = ? AND seq = ?",
       [projectId, seq]
     );
@@ -315,7 +314,7 @@ export class TaskRepository {
       }
     }
 
-    return this.db.all<Task>(query, params);
+    return this.db.query<Task>(query, params);
   }
 
   update(id: string, updates: Partial<Task>): Task | undefined {
@@ -399,7 +398,7 @@ export class ProjectConfigRepository {
   }
 
   getByProjectId(projectId: string): ProjectConfig | undefined {
-    return this.db.get<ProjectConfig>(
+    return this.db.queryOne<ProjectConfig>(
       "SELECT * FROM project_config WHERE project_id = ?",
       [projectId]
     );
