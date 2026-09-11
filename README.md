@@ -47,6 +47,9 @@ It covers:
 - **Message vocabulary** — the words sessions actually converged on: `SCOPE`/`CLAIM`, `RELEASE`, `ACK`,
   `FREEZE? / FROZEN / BUSY / THAW`, `PUSHED`, and a `<RESOURCE>? / <RESOURCE> FREE` lock for the things
   git does not cover (one browser profile, one dev server, one database per machine).
+- **Resource-lock discovery** — `references/resource-lock.sh playwright` reads Chrome's `SingletonLock`
+  in the Playwright MCP profile and walks the process tree to the session that holds it, so a session
+  asks the one holder instead of broadcasting. The probe hook reports a held profile at start.
 - **Addressing failures** — names break on rename or exit, sockets break on exit; what each error
   text means and what to do.
 - **Cross-session messaging** — what to send, and why a sibling's message is never permission to

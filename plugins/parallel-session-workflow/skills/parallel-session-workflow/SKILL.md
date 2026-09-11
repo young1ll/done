@@ -320,18 +320,55 @@ skill records them rather than inventing others.
 
 ### Resource locks
 
-Git is not the only thing sessions share. On one machine there is one Playwright/Chrome profile, one
-dev server port, one local database. Two sessions driving one browser profile fail with "profile in
-use", and the fix is the same handshake as a freeze, named after the resource:
+Git is not the only thing sessions share. On one machine there is one Playwright browser profile, one
+dev server port, one local database. Measured on this repository over two days: eight
+`Browser is already in use for …/ms-playwright-mcp/mcp-chrome-…` failures, about twenty-five
+close-and-hand-over round trips in one day, and one `PLAYWRIGHT?` broadcast to three sessions because
+the asker could not tell who held the profile — all three answered `FREE`, two of them for nothing.
 
-```
-PLAYWRIGHT? from <me>: shared profile mcp-chrome-… is in use — if you hold it, send PLAYWRIGHT FREE when done
-PLAYWRIGHT FREE — closed the browser (browser_close); yours now
+Why it collides: every session starts its own Playwright MCP server, and by default all of them open
+the **same persistent profile** (`~/Library/Caches/ms-playwright-mcp/mcp-chrome-<hash>`). Chrome
+guards a profile with a `SingletonLock` symlink pointing at `<host>-<chrome pid>`, and that pid's
+ancestor chain leads to the session that owns it. So the holder is a fact you can read:
+
+```bash
+RL="$CLAUDE_PLUGIN_ROOT/skills/parallel-session-workflow/references/resource-lock.sh"
+bash "$RL" playwright
+#   FREE  mcp-chrome-e11135b
+#   HELD  mcp-chrome-e11135b by session 14712 socket=uds:/tmp/cc-socks/14712.sock chrome=26801
+#   STALE mcp-chrome-e11135b (lock -> dead pid …)       ← Chrome crashed; the lock outlived it
+# exit 0 free · 1 held by another session · 2 stale · 3 held by me
 ```
 
-Rules: the holder closes the resource *before* sending `FREE`; the asker does not open it until `FREE`
-arrives; a `FREE` you did not ask for is still binding on the sender (they closed it). Any resource
-name works — `DEVSERVER?`, `DB?` — as long as both sides use the same word.
+Rules, in the order they save the most time:
+
+1. **Close the browser the moment your check is done** (`browser_close`). Nearly every hand-over in
+   the data was requested from a holder that was idle — screenshots taken, browser left open. A
+   persistent profile keeps the login; closing costs nothing but the next `navigate`.
+2. **Look before you ask.** Run `resource-lock.sh playwright` before the first browser call. `FREE` →
+   go. `HELD` → send `PLAYWRIGHT?` to *that* socket, nobody else. `[me]` → you left it open; close it.
+   The SessionStart hook prints a `HELD` line too, when someone else holds it at your start.
+3. **The ask and the release are one word each:**
+
+   ```
+   PLAYWRIGHT? from <me>: profile mcp-chrome-… is yours — send PLAYWRIGHT FREE when your check is done
+   PLAYWRIGHT FREE — closed (browser_close); login state kept
+   ```
+
+   The holder closes *before* sending `FREE`; the asker does not open until `FREE` arrives; a `FREE`
+   you did not ask for still means the sender closed. Any resource name works — `DEVSERVER?`, `DB?` —
+   as long as both sides use the same word.
+4. **`STALE`** means Chrome died and left the symlink. Do not delete it while any Chrome is using that
+   profile; if `ps` shows none, removing `SingletonLock` is the fix, and say that you did.
+5. **The user may be in that window.** Sessions observed the user logging in by hand inside the
+   Playwright window. A `FREE` that closes the browser mid-login costs them the form — announce
+   before closing if a human might be typing there.
+
+The contention itself is a configuration fact, not a law: `@playwright/mcp` accepts `--user-data-dir`
+(one profile per session, no lock, but a login per profile), `--storage-state` (seed a fresh profile
+with saved cookies), and `--cdp-endpoint` (many sessions attached to one running Chrome, tabs instead
+of profiles). Which one fits is a project decision — it changes the MCP server registration, which is a
+shared file — so raise it with the user rather than switching a session's own config.
 
 ### Freezing for a landing
 
@@ -482,7 +519,7 @@ on a shared repository.
 | a push was rejected | **session-landing** skill → decoding rejections |
 | a claim file whose owner is gone, or with no `PID` | "Stale claims" above — `claims.sh reap` for STALE, the user for UNKNOWN |
 | `No agent named …` / `re-send with the ref` / `ENOENT … .sock` | "Addressing failures" above |
-| a browser profile / port / database is "in use" | "Resource locks" above — `<RESOURCE>?` handshake |
+| `Browser is already in use for …` | "Resource locks" above — `resource-lock.sh playwright`, then `PLAYWRIGHT?` to the holder only |
 | a worktree is missing `node_modules` / `.env` | not a failure — provision it (mode A, step 2) |
 
 ## Stop conditions

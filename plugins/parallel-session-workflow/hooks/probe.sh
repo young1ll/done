@@ -19,7 +19,13 @@ others=0
 if [ -d /tmp/cc-socks ]; then
   for s in /tmp/cc-socks/*.sock; do [ -S "$s" ] || continue; [ "$s" = "${CLAUDE_CODE_MESSAGING_SOCKET:-}" ] && continue; others=$((others+1)); done
 fi
-[ "$wt" -eq 0 ] && [ "$lock" -eq 0 ] && [ ${#live[@]} -eq 0 ] && [ ${#stale[@]} -eq 0 ] && [ ${#unknown[@]} -eq 0 ] && exit 0
+pw=""
+rl="$(cd "$(dirname "$0")/.." && pwd)/skills/parallel-session-workflow/references/resource-lock.sh"
+if [ -x "$rl" ]; then
+  pwline=$(bash "$rl" playwright 2>/dev/null | grep -E '^(HELD|STALE)' | grep -v '\[me\]' | head -1)
+  [ -n "$pwline" ] && pw="Playwright browser profile: $pwline"
+fi
+[ "$wt" -eq 0 ] && [ "$lock" -eq 0 ] && [ -z "$pw" ] && [ ${#live[@]} -eq 0 ] && [ ${#stale[@]} -eq 0 ] && [ ${#unknown[@]} -eq 0 ] && exit 0
 mode=$([ "$gitdir" = "$common" ] && echo "this is the main checkout — mode B (shared) rules apply" || echo "this is a linked worktree — mode A")
 out="parallel-session-workflow: parallel signals in $(basename "$(git rev-parse --show-toplevel)") —"
 [ "$wt" -gt 0 ] && out="$out $wt other worktree(s);"
@@ -27,6 +33,7 @@ out="parallel-session-workflow: parallel signals in $(basename "$(git rev-parse 
 [ ${#live[@]} -gt 0 ] && out="$out live claims: ${live[*]};"
 [ ${#stale[@]} -gt 0 ] && out="$out stale claims (owner gone): ${stale[*]};"
 [ ${#unknown[@]} -gt 0 ] && out="$out claims without PID (cannot check): ${unknown[*]};"
+[ -n "$pw" ] && out="$out $pw — send PLAYWRIGHT? to that socket before opening a browser;"
 root=${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}
 out="$out $others other Claude session(s) on this machine. $mode. Invoke the parallel-session-workflow skill before your first git write; read claims with: bash '$root/skills/parallel-session-workflow/references/claims.sh' list"
 echo "$out"

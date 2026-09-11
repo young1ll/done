@@ -96,6 +96,21 @@ r=$(bash "$CS" reap); [ ! -e "$C/ghost" ] && ok y y "reap removes STALE" || ok n
 bash "$CS" release me >/dev/null; [ ! -e "$C/me" ] && ok y y "release removes the claim" || ok n y "release removes the claim"
 rm -f "$C/nopid"
 
+echo "== resource-lock.sh =="
+RL="$(dirname "$0")/resource-lock.sh"
+sleep 30 & SP=$!                                  # a "chrome": its ancestor chain contains this verify.sh
+o=$(RL_SESSION_PATTERN=verify.sh bash "$RL" owner "$SP"); ok "$o" "$$" "owner walks ppid up to the session process"
+PR="$R/pw"; mkdir -p "$PR/mcp-chrome-live" "$PR/mcp-chrome-dead" "$PR/mcp-chrome-free"
+ln -s "host-$SP" "$PR/mcp-chrome-live/SingletonLock"; ln -s "host-2147483000" "$PR/mcp-chrome-dead/SingletonLock"
+o=$(RL_SESSION_PATTERN=verify.sh CLAUDE_PID=1 bash "$RL" playwright --root "$PR"); rc=$?
+echo "$o" | grep -q "^HELD  mcp-chrome-live by session $$"; ok "$?" "0" "live lock → HELD by the owning session pid"
+echo "$o" | grep -q "^STALE mcp-chrome-dead"; ok "$?" "0" "lock to a dead pid → STALE"
+echo "$o" | grep -q "^FREE  mcp-chrome-free"; ok "$?" "0" "no lock → FREE"
+o=$(RL_SESSION_PATTERN=verify.sh CLAUDE_PID=$$ bash "$RL" playwright --root "$PR"); rc=$?
+echo "$o" | grep -q "\[me\]"; ok "$?" "0" "my own lock is marked [me]"
+ok "$rc" "3" "exit 3 when I am the holder"
+kill "$SP" 2>/dev/null; wait "$SP" 2>/dev/null
+
 echo "== SessionStart probe hook =="
 PROBE="$(dirname "$0")/../../../hooks/probe.sh"
 git init -q -b main ../solo && (cd ../solo && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init)
