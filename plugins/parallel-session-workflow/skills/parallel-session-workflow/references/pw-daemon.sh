@@ -30,9 +30,11 @@ case "${1:-status}" in
     if listening "$PW_MCP_PORT"; then echo "port $PW_MCP_PORT is taken by something that is not our daemon" >&2; exit 1; fi
     [ -s "$PW_STATE" ] || printf '{"cookies":[],"origins":[]}\n' > "$PW_STATE"
     printf '{ "browser": { "launchOptions": { "args": ["--remote-debugging-port=%s"] } } }\n' "$PW_DEBUG_PORT" > "$CFG"
-    args=(--port "$PW_MCP_PORT" --isolated --storage-state "$PW_STATE" --config "$CFG")
+    mkdir -p "$PW_HOME/output"
+    args=(--port "$PW_MCP_PORT" --isolated --storage-state "$PW_STATE" --config "$CFG" --output-dir "$PW_HOME/output")
     [ "${PW_HEADLESS:-0}" = 1 ] && args+=(--headless)
-    nohup npx "$PW_MCP_PKG" "${args[@]}" >> "$LOG" 2>&1 &
+    cd "$PW_HOME" || exit 1
+    nohup npx "$PW_MCP_PKG" "${args[@]}" >> "$LOG" 2>&1 < /dev/null &   # fully detached: a caller piping our output must not wait on the daemon
     echo $! > "$PIDF"
     for i in $(seq 1 60); do listening "$PW_MCP_PORT" && break; sleep 0.5; done
     if listening "$PW_MCP_PORT"; then
