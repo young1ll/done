@@ -16,6 +16,11 @@ Written for Claude Code (ListAgents, SendMessage, EnterWorktree, ExitWorktree), 
 coordination layer depends on those. Detection runs on git alone, and `references/git-facts.md` is
 tool-free — under another agent, or none, that layer still holds.
 
+**The repo probe runs for you once.** This plugin ships a `SessionStart` hook (`hooks/probe.sh`)
+that runs the git-only probe below when a session starts or resumes. It is silent on a solo checkout;
+when it prints — other worktrees, an `index.lock`, claim files — treat that line as the trigger to
+read this skill *before your first git write*, not after the first collision.
+
 **Pushing is a separate problem.** Isolation buys nothing at the moment two sessions reach the
 remote. For push conflicts, pull races, and landing several sessions' work together, use the
 **session-landing** skill.
@@ -198,8 +203,12 @@ The working tree, the index, HEAD and the stash are all one copy. There is no is
 on, so every rule here is load-bearing rather than advisory. Full mechanics and recipes:
 `references/shared-checkout.md`.
 
-- **Stage and commit by explicit path.** A bare `git commit` sweeps in whatever a sibling has staged:
-  `git add <my paths> && git commit -m "…" -- <my paths>`. Never `git add -A` or `git add .`.
+- **Stage and commit by explicit path — both steps.** A bare `git commit` sweeps in whatever a sibling
+  has staged, and `git add <path>` on its own does not scope the commit:
+  `git add -- <my paths> && git commit -m "…" -- <my paths>`. The heredoc form keeps the pathspec too,
+  verified in `verify.sh`: `git commit -q -F - -- <my paths> <<'EOF'`. Never `git add -A`,
+  `git add .`, or `git commit -a`. Observed drift: sessions stage by path and then commit without one —
+  that is the window in which a sibling's staged file rides along.
 - **Serialize git writes.** Never issue two commits, or a commit and an `add`, in parallel Bash
   calls — they collide on `.git/index.lock` and the loser stages nothing while reporting nothing.
 - **Never switch branches.** `git checkout` / `git switch` rewrites the working tree under every
@@ -214,8 +223,11 @@ on, so every rule here is load-bearing rather than advisory. Full mechanics and 
 
 ## Claim your file scope
 
-Overlapping edits are prevented by claims, not by good intentions. Before starting, announce scope to
-the user and — via SendMessage — to every sibling whose scope could overlap:
+Overlapping edits are prevented by claims, not by good intentions. A claim has two carriers, and you
+need both: a **message** so live siblings hear it now, and a **claim file** so a session that starts
+after you — or one you have no address for — reads it later.
+
+The message (`CLAIM` and `SCOPE` are the same verb; sessions use both):
 
 ```
 SCOPE  <session-name>: apps/api/src/order/**, apps/web/src/app/(admin)/orders/**
@@ -223,41 +235,103 @@ BASE   develop @ 32f00cc24
 MODE   A (worktree feat/order-substatus) | B (shared checkout)
 ```
 
-On finish, release it:
+On finish, release it, with the SHA that carries your work:
 
 ```
 RELEASE <session-name>: apps/api/src/order/** — landed as 9feba0b99 on develop
 ```
 
-### When there is no address
+### The claim file
 
-A claim only helps if it reaches the other party, and `ListAgents` cannot always give you one — a
-human in another terminal, a different agent, a session that starts after yours. Fall back to a claim
-file that every worktree of the repository can read:
-
-```bash
-CLAIMS="$(git rev-parse --git-common-dir)/claims"; mkdir -p "$CLAIMS"
-{ echo "SCOPE apps/api/src/order/**"
-  echo "BASE  develop @ $(git rev-parse --short HEAD)"
-  echo "MODE  B"
-  echo "PID   $$"; } > "$CLAIMS/<session-name>"
-```
-
-Read the others before you start, and remove yours on release:
+Kept under `$(git rev-parse --git-common-dir)/claims/<session-name>` — the same directory from every
+worktree, invisible to `git status`, and a survivor of `git clean -fdx` (all verified in
+`references/verify.sh`; a `.claude/claims/` path fails the second test). `references/claims.sh` writes,
+lists, lends, reaps and releases them:
 
 ```bash
-for c in "$CLAIMS"/*; do [ "$c" = "$CLAIMS/<session-name>" ] || { echo "== $c"; cat "$c"; }; done
-rm -f "$CLAIMS/<session-name>"
+CS="$CLAUDE_PLUGIN_ROOT/skills/parallel-session-workflow/references/claims.sh"   # or the path the hook printed
+bash "$CS" list                                                   # read everyone's, with LIVE / STALE / UNKNOWN
+bash "$CS" write <session-name> --mode B --scope 'apps/api/src/order/**' \
+     --shared apps/web/src/features/field/column-view/business-column-view.tsx \
+     --avoid  'apps/web/src/features/field/column-view/*'        # a sibling's area you will not enter
+bash "$CS" lend   <session-name> <path> <to-session> "why"       # file-level loan, sibling edits it for now
+bash "$CS" return <session-name> <path> <sha>                    # loan ended, at that commit
+bash "$CS" release <session-name>
+bash "$CS" reap                                                   # remove claims whose owner pid is gone
 ```
 
-That location, and not a path in the working tree — all four verified in `references/verify.sh`:
-`--git-common-dir` resolves to the same directory from every worktree, so siblings read it with no
-messaging; the file never appears in `git status`, so it cannot be committed by accident; it survives
-`git clean -fdx`; and a `.claude/claims/` file fails the second test — it shows up as untracked.
+The format the script writes, and what each line means when you read a sibling's by hand:
 
-A claim outlives the session that wrote it. Before honouring one, check the owner is still alive with
-`kill -0 <pid>`; treat a claim whose owner is gone as stale, and say that you are reaping it rather
-than deleting it silently.
+| Line | Required | Meaning |
+| --- | --- | --- |
+| `SESSION` | yes | the name a `SendMessage` can reach |
+| `SCOPE` (repeatable) | yes | paths only this session edits |
+| `BASE` | yes | branch @ short SHA the claim was written on |
+| `MODE` | yes | `A` (worktree) or `B` (shared checkout) |
+| `PID`, `SOCKET` | yes | how liveness is checked; `SOCKET` is the session's messaging socket |
+| `SINCE` | yes | when the claim was written |
+| `SHARED` | no | a path you will edit only after notifying its owner, minimally, in its own commit |
+| `AVOID` | no | a sibling's area you are explicitly staying out of |
+| `LEND` / `RETURN` | no | a file handed to a sibling for a bounded change, and the SHA that ended the loan |
+| `NOTE` | no | anything a reader needs before touching your area |
+
+That table came from reading real claim files, not from design: after a week of shared-checkout work
+the live ones had grown `SHARED`, `AVOID` and `LEND` lines by hand, because a static scope list cannot
+describe two sessions editing one component from different sides. Write those lines when they are
+true; a claim that says only `SCOPE` invites a sibling to guess.
+
+### Stale claims
+
+A claim outlives the session that wrote it, and nothing else removes it. `claims.sh list` classifies:
+
+- **LIVE** — `kill -0 <pid>` succeeds (and the socket exists, when recorded). Honour it.
+- **STALE** — the pid is gone. `claims.sh reap` removes it; say that you reaped it, and to whom.
+- **UNKNOWN** — no `PID` line. It cannot be checked, so the script never reaps it. Report it to the
+  user and ask before honouring or retiring it. Observed: a hand-written claim with no `PID` outlived
+  its owner by two days because every session that read it treated it as live.
+
+Before you touch a file outside your announced scope, re-run `claims.sh list` and ListAgents, and claim
+it first. In mode A you can check what a sibling's branch already touches without any network, because
+its branch is already a local ref:
+
+```bash
+git diff --name-only develop...<sibling-branch>
+```
+
+## Message vocabulary
+
+One word first, then your name, then the payload — the recipient's human sees only the first line as a
+preview. These are the words sessions actually converged on over a week of shared-checkout work; the
+skill records them rather than inventing others.
+
+| First word | Sent by | Means | Reply expected |
+| --- | --- | --- | --- |
+| `SCOPE` / `CLAIM` | anyone | I am taking these paths (see above) | `ACK`, or an objection |
+| `RELEASE` | owner | done with these paths; carried by this SHA | none |
+| `ACK` | anyone | I agree / I read it. First line says *what* you agree to | none |
+| `FREEZE?` | integrator | stop writing; reply with your tip | `FROZEN` or `BUSY` |
+| `FROZEN` | owner | tip SHA, nothing uncommitted; no writes until `THAW` | — |
+| `BUSY` | owner | cannot stop cleanly; honest estimate | later `FROZEN` |
+| `THAW` (alias `RESUME`) | integrator | write again. Carries the landed SHA — **or says no push happened** | none |
+| `PUSHED` | pusher | what reached the remote, by SHA (session-landing) | none |
+| `<RESOURCE>?` | anyone | I need a machine resource you may hold — see below | `<RESOURCE> FREE` |
+| `<RESOURCE> FREE` | holder | released it; go ahead | none |
+| `LEND` / `RETURN` | owner / borrower | file-level loan and its end, mirrored in the claim file | `ACK` |
+
+### Resource locks
+
+Git is not the only thing sessions share. On one machine there is one Playwright/Chrome profile, one
+dev server port, one local database. Two sessions driving one browser profile fail with "profile in
+use", and the fix is the same handshake as a freeze, named after the resource:
+
+```
+PLAYWRIGHT? from <me>: shared profile mcp-chrome-… is in use — if you hold it, send PLAYWRIGHT FREE when done
+PLAYWRIGHT FREE — closed the browser (browser_close); yours now
+```
+
+Rules: the holder closes the resource *before* sending `FREE`; the asker does not open it until `FREE`
+arrives; a `FREE` you did not ask for is still binding on the sender (they closed it). Any resource
+name works — `DEVSERVER?`, `DB?` — as long as both sides use the same word.
 
 ### Freezing for a landing
 
@@ -270,8 +344,13 @@ FREEZE? from <integrator>: stop writing and reply FROZEN with your branch tip �
         feat/a, feat/b, feat/c onto develop. Commit or park what you have first.
 FROZEN  <session-b>: feat/b @ 3f4c30e68 — nothing uncommitted
 BUSY    <session-c>: feat/c — mid-edit, ~5 min, will send FROZEN
-RESUME  from <integrator>: rebase before your next commit — landed origin/develop @ 9feba0b99.
+THAW    from <integrator>: rebase before your next commit — landed origin/develop @ 9feba0b99.
+THAW    from <integrator>: no push — origin/develop unchanged @ 248bcfd33; resume git writes and tests.
 ```
+
+Both `THAW` forms matter. A freeze that ends without a push is common (the user changed their mind,
+CI failed, the batch was dropped) and a frozen session has no other way to learn that it may write
+again. Never leave a sibling frozen by silence.
 
 Rules for the integrator:
 
@@ -297,24 +376,10 @@ Rules for a session that receives `FREEZE?`:
   these you cannot answer at all, and silence reads to the integrator exactly like refusal: your
   branch gets dropped from the batch.
 - Finish or park the current edit as a commit (not a stash — the stack is shared), reply `FROZEN`
-  with your tip SHA, and make no further writes until `RESUME`.
+  with your tip SHA, and make no further writes until `THAW`.
 - If you cannot stop cleanly, reply `BUSY` with an honest estimate rather than a silent `FROZEN`.
-- After `RESUME`, rebase onto the new base before your next commit.
-
-Before you touch a file outside your announced scope, re-run ListAgents and claim it first. In mode A
-you can check what a sibling's branch already touches without any network, because its branch is
-already a local ref:
-
-```bash
-git diff --name-only develop...<sibling-branch>
-```
-
-## Task topology
-
-- One large task, multiple workers → prefer subagents inside one session, isolated as above, with
-  file ownership partitioned so two never hold one file.
-- Several unrelated tasks → one named session per task, each in its own worktree.
-- Agent teams do not auto-isolate teammates. Partition file ownership by hand when using them.
+- After `THAW`, rebase onto the new base before your next commit — unless the `THAW` says no push
+  happened.
 
 ## Cross-session messaging protocol
 
@@ -338,6 +403,22 @@ you:
   attribute into your `to`; see the `FREEZE?` receiver rules above for the exact shape.
 - **Idle is not frozen.** `notify_when_idle` tells you a session finished its turn — it can finish
   holding uncommitted edits. Before a landing you need a `FROZEN` reply, not idleness.
+
+### Addressing failures
+
+Two kinds of address exist and they fail differently. A **name** is what ListAgents shows; it is
+resolved at send time, so it breaks when the peer renames or exits. A **socket** (`uds:/tmp/cc-socks/
+<pid>.sock`, the `from` of any message you received) is bound to a process, so it breaks only when that
+process is gone. First contact goes to a name; every reply goes to the `from` you were given. Observed
+across ~700 sends, these are the failures and what each one means:
+
+| Result text | Cause | Do |
+| --- | --- | --- |
+| `No agent named 'x' is reachable` | renamed, or exited since you last listed | re-run ListAgents; if a near name is offered, confirm it is the same session by its directory or claim before resending |
+| `'x' matches one session that could be checked, but not every session could be — re-send with the ref` | two rosters, one unreachable; the name is ambiguous | append the ` [ref]` from the ListAgents row: `to: "x [ab12cd]"` |
+| `Failed to send to uds:… ENOENT` | the peer process exited; its socket died with it | the session is gone — its claim is stale (`claims.sh reap`), its `FROZEN` is void; tell the user |
+| `InputValidationError … could not be parsed as JSON` on a subscribe-only send | an empty `message` with `notify_when_idle` breaks the encoder | always send a real first line; there is no free probe |
+| delivered, no reply | peer is a cloud/offline row, or nobody is reading | see "Know which siblings can actually answer"; do not wait past what the task tolerates |
 
 ## Shared file rules
 
@@ -378,7 +459,7 @@ to do when the answer is bad, are in `references/git-facts.md`.
    ```
 
 3. If conflicts occur, stop and ask the user.
-4. Release your scope claim to siblings via SendMessage.
+4. Release your scope claim — `RELEASE` via SendMessage, and `claims.sh release <name>`.
 5. To push, open a PR, or land several sessions at once → **session-landing skill**. Pushing is a
    user decision unless the user has already approved it.
 6. Exit/clean up the worktree when done (ExitWorktree, or `git worktree remove <path>` for manual
@@ -399,6 +480,9 @@ on a shared repository.
 | `worktree add` refuses a branch | `git-facts.md` → one branch, one checkout |
 | worktree records point at directories that are gone | `git-facts.md` → worktree records out of sync |
 | a push was rejected | **session-landing** skill → decoding rejections |
+| a claim file whose owner is gone, or with no `PID` | "Stale claims" above — `claims.sh reap` for STALE, the user for UNKNOWN |
+| `No agent named …` / `re-send with the ref` / `ENOENT … .sock` | "Addressing failures" above |
+| a browser profile / port / database is "in use" | "Resource locks" above — `<RESOURCE>?` handshake |
 | a worktree is missing `node_modules` / `.env` | not a failure — provision it (mode A, step 2) |
 
 ## Stop conditions
