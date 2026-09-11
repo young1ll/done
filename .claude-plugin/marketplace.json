@@ -45,6 +45,25 @@
       ],
       "license": "MIT",
       "homepage": "https://github.com/young1ll/done/tree/main/plugins/session-landing"
+    },
+    {
+      "name": "playwright-shared",
+      "description": "One Playwright MCP daemon per machine instead of one per session — each session gets its own tabs, logins flow between sessions automatically, and the browser-profile contention between parallel sessions disappears. Registers the server itself, keeps the daemon up from a hook, installs a login service.",
+      "author": {
+        "name": "young1ll"
+      },
+      "source": "./plugins/playwright-shared",
+      "category": "workflow",
+      "keywords": [
+        "playwright",
+        "browser",
+        "mcp",
+        "parallel",
+        "multi-agent",
+        "daemon"
+      ],
+      "license": "MIT",
+      "homepage": "https://github.com/young1ll/done/tree/main/plugins/playwright-shared"
     }
   ]
 }

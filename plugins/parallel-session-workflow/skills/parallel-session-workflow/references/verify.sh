@@ -115,11 +115,6 @@ echo "$o" | grep -q "\[me\]"; ok "$?" "0" "my own lock is marked [me]"
 ok "$rc" "3" "exit 3 when I am the holder"
 kill "$SP" 2>/dev/null; wait "$SP" 2>/dev/null
 
-echo "== pw-daemon.sh (no network: syntax and stopped-state reporting) =="
-bash -n "$(dirname "$0")/pw-daemon.sh"; ok "$?" "0" "pw-daemon.sh parses"
-o=$(PW_HOME="$R/pwhome" PW_MCP_PORT=1 bash "$(dirname "$0")/pw-daemon.sh" status); case "$o" in STOPPED*) ok y y "status reports STOPPED with a fresh PW_HOME";; *) ok "$o" "STOPPED…" "status reports STOPPED with a fresh PW_HOME";; esac
-o=$(PW_HOME="$R/pwhome" PW_DEBUG_PORT=1 bash "$(dirname "$0")/pw-daemon.sh" export 2>&1); ok "$?" "1" "export refuses when the debug port is down"
-
 echo "== SessionStart probe hook =="
 PROBE="$(dirname "$0")/../../../hooks/probe.sh"
 git init -q -b main ../solo && (cd ../solo && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init)

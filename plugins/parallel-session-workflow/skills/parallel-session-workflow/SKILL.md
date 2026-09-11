@@ -366,10 +366,10 @@ Rules, in the order they save the most time:
 
 The contention itself is a configuration fact, not a law. `@playwright/mcp` can be arranged so sessions
 never share a profile — measured variants, what each isolates, and the one that works without a
-separate browser launcher are in `references/playwright-shared.md`; `references/pw-daemon.sh` runs
-that arrangement (one HTTP daemon, an isolated context per session, a login exported once and seeded
-into every later session). When it is in use the lock above never appears, and the probe hook says
-so if the daemon is down. Every variant changes the MCP
+separate browser launcher are in `references/playwright-shared.md`. The **playwright-shared** plugin in
+the same marketplace packages that arrangement (one daemon, an isolated context per session, cookies
+synced between contexts so a login anywhere is a login everywhere). With it installed the lock above
+never appears and this whole section does not apply — its own skill says what does. Every variant changes the MCP
 server registration, which is a shared file, so raise it with the user rather than switching a
 session's own config.
 

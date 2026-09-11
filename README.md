@@ -8,6 +8,7 @@ Small, finished Claude Code plugins. Each one does its job and gets out of the w
 | --- | --- |
 | [parallel-session-workflow](./plugins/parallel-session-workflow) | Run several Claude Code sessions on one git repository without them colliding. |
 | [session-landing](./plugins/session-landing) | Get those sessions' work onto the remote — safely, and several at once. |
+| [playwright-shared](./plugins/playwright-shared) | One Playwright daemon per machine: sessions stop fighting over the browser, and a login in one is a login in all. |
 
 ## Install
 
@@ -15,6 +16,7 @@ Small, finished Claude Code plugins. Each one does its job and gets out of the w
 /plugin marketplace add young1ll/done
 /plugin install parallel-session-workflow@done
 /plugin install session-landing@done
+/plugin install playwright-shared@done   # optional: parallel sessions that use the Playwright browser
 ```
 
 The two are designed as a pair: `parallel-session-workflow` covers the work, `session-landing` covers
@@ -52,9 +54,8 @@ It covers:
   asks the one holder instead of broadcasting. The probe hook reports a held profile at start.
 - **Sharing a browser without the lock** — `references/playwright-shared.md` measures every
   `@playwright/mcp` arrangement (per-session profile, CDP, HTTP daemon, isolated contexts) for tab
-  isolation and login sharing; `references/pw-daemon.sh` runs the one-daemon arrangement
-  (start/stop/status/export) and `references/pw-state.mjs` exports a login done by hand into the
-  storage-state file every later session starts from.
+  isolation and login sharing. The arrangement that works is packaged as the **playwright-shared**
+  plugin in this marketplace.
 - **Addressing failures** — names break on rename or exit, sockets break on exit; what each error
   text means and what to do.
 - **Cross-session messaging** — what to send, and why a sibling's message is never permission to
@@ -106,7 +107,8 @@ macOS and its word-splitting rules break the obvious `for b in $BRANCHES` form.
 
 `plugins/parallel-session-workflow/skills/parallel-session-workflow/references/verify.sh` re-runs every
 executable claim both skills make — git semantics, claim files, the pathspec commit form, `claims.sh`,
-the probe hook — in a throwaway repository. Run it before editing either skill; if it fails on a newer
+the probe hook — in a throwaway repository. `plugins/playwright-shared/bin/verify.sh` checks that
+plugin's scripts without network or Chrome. Run it before editing either skill; if it fails on a newer
 git, the document is what is wrong.
 
 ## License
