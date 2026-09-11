@@ -64,6 +64,10 @@ PUSHING <session-name> → origin/develop : 3 commits (32f00cc24..HEAD), apps/ap
 PUSHED <session-name> → origin/develop @ 9feba0b99 — rebase before your next push
 ```
 
+`PUSHED` and `THAW` are different words on purpose: `PUSHED` reports the remote, `THAW` lifts a freeze.
+After a freeze-and-land, send both (one message is fine: `PUSHED … THAW.`); after a push nobody was
+frozen for, `PUSHED` alone.
+
 ## When the push is rejected
 
 Read the tag in brackets; each means something different.
@@ -122,7 +126,10 @@ parallel-session-workflow → `references/session-visibility.md`.
    each (protocol in the parallel-session-workflow skill). A branch with no `FROZEN` does not get
    landed — drop it from the batch and say so.
 3. **Land**, per the batch section below.
-4. **`RESUME`** to every session, with the landed SHA, so they rebase before their next commit.
+4. **`THAW`** (alias `RESUME`) to every session, with the landed SHA, so they rebase before their next
+   commit. If the landing was abandoned — CI failed, the user withdrew the mandate, the batch was
+   dropped — still send `THAW`, saying **no push happened** and the unchanged `origin/<branch>` SHA. A
+   frozen session has no other way to learn it may write again.
 
 The integrator publishes other sessions' commits under its own push. That raises the bar, not lowers
 it: report exactly whose work went out, by branch and SHA.
@@ -219,6 +226,7 @@ Stop and ask the user when:
 - a force-push looks necessary on any branch a sibling or the remote default shares
 - the overlap prescan shows two branches editing the same file
 - an owning session has not sent `FROZEN` and you were asked to land its branch
+- you froze siblings and are about to stop without pushing — send the no-push `THAW` first
 - you are about to publish a commit that is not yours
 - the remote moved between your probe and your push, twice in a row — a sibling is pushing; message
   them instead of racing
