@@ -9,19 +9,21 @@
   "plugins": [
     {
       "name": "parallel-session-workflow",
-      "description": "Run several Claude Code sessions on one git repository without them colliding — isolated-worktree and shared-checkout modes, scope claims, cross-session messaging, shared-file rules, and recovery commands.",
+      "description": "Run several Claude Code sessions on one git repository without them colliding — session-start probe hook, isolated-worktree and shared-checkout modes, claim files with liveness, the FREEZE?/THAW and resource-lock vocabulary, addressing failures, and recovery commands.",
       "author": {
         "name": "young1ll"
       },
       "source": "./plugins/parallel-session-workflow",
       "category": "workflow",
       "keywords": [
-        "worktree",
-        "parallel",
-        "multi-agent",
+        "claims",
         "git",
+        "hooks",
+        "multi-agent",
+        "parallel",
+        "shared-checkout",
         "workflow",
-        "shared-checkout"
+        "worktree"
       ],
       "license": "MIT",
       "homepage": "https://github.com/young1ll/done/tree/main/plugins/parallel-session-workflow"

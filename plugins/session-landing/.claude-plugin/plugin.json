@@ -1,7 +1,7 @@
 {
   "name": "session-landing",
   "description": "Get parallel session work onto the remote without races — pre-push probes, one-pusher-per-branch claiming, safe rebase-and-retry instead of force, and landing several sessions' branches in one atomic push.",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "author": {
     "name": "young1ll",
     "url": "https://github.com/young1ll"
@@ -9,5 +9,13 @@
   "homepage": "https://github.com/young1ll/done/tree/main/plugins/session-landing",
   "repository": "https://github.com/young1ll/done",
   "license": "MIT",
-  "keywords": ["git", "push", "parallel", "multi-agent", "workflow", "rebase", "conflict"]
+  "keywords": [
+    "git",
+    "push",
+    "parallel",
+    "multi-agent",
+    "workflow",
+    "rebase",
+    "conflict"
+  ]
 }

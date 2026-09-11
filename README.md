@@ -27,6 +27,10 @@ another's commit, a shared staging area swallows files, `git stash pop` restores
 
 It covers:
 
+- **A session-start probe hook** — the git-only probe runs when a session starts or resumes and
+  prints one line when it finds other worktrees, an `index.lock`, or claim files. Silent when solo.
+  This exists because the skill's own usage data showed sessions coordinating heavily without ever
+  loading it: the trigger has to come from the repository, not from the model remembering.
 - **Detecting parallel mode** — when to treat the environment as shared, and when to re-check.
   Also why neither session roster settles it: both filter what they list, so a short list is not
   an empty machine.
@@ -36,9 +40,15 @@ It covers:
   Also what a worktree does *not* isolate: refs, the stash, remote-tracking branches.
 - **Shared-checkout discipline** — the index is shared, so `git add <path>` does not scope your
   commit; `.git/index.lock` collisions silently drop staged files; HEAD rewinds hit everyone.
-- **Scope claims and freezes** — a message format for claiming and releasing file ownership, and a
-  `FREEZE? / FROZEN / BUSY / RESUME` handshake for the moment one session is asked to publish
-  everyone's work.
+- **Claim files with liveness** — `references/claims.sh` writes claims under
+  `$(git rev-parse --git-common-dir)/claims/` (shared by every worktree, invisible to `git status`),
+  lists them as LIVE / STALE / UNKNOWN by owner pid, records `SHARED` / `AVOID` / `LEND` lines for the
+  cases a static scope list cannot express, and reaps the dead ones.
+- **Message vocabulary** — the words sessions actually converged on: `SCOPE`/`CLAIM`, `RELEASE`, `ACK`,
+  `FREEZE? / FROZEN / BUSY / THAW`, `PUSHED`, and a `<RESOURCE>? / <RESOURCE> FREE` lock for the things
+  git does not cover (one browser profile, one dev server, one database per machine).
+- **Addressing failures** — names break on rename or exit, sockets break on exit; what each error
+  text means and what to do.
 - **Cross-session messaging** — what to send, and why a sibling's message is never permission to
   bypass a check.
 - **Shared-file rules** — lockfiles, CI config, and migrations need an owner, not a conversation.
@@ -59,7 +69,8 @@ It covers:
   sibling's `git fetch` advances the very ref the lease is checked against, and the force goes
   through. Reproduced, with the transcript. `--force-if-includes` is the flag that actually holds.
 - **Landing on request** — what a session does when the user tells it to publish several sessions'
-  work: confirm the mandate, freeze the owners, land, then hand everyone their new base.
+  work: confirm the mandate, freeze the owners, land, then `THAW` everyone with their new base — or
+  with an explicit "no push happened", so nobody stays frozen by silence.
 - **Landing several sessions at once** — overlap prescan, landing order, an integrator loop that
   aborts cleanly on conflict, and `git push --atomic` so a multi-branch push cannot land halfway.
 - **Shared checkouts** — where one push publishes every session's commits, so the risk is premature
@@ -68,6 +79,13 @@ It covers:
 
 Commands in both plugins are written for zsh as well as bash, since that is the default shell on
 macOS and its word-splitting rules break the obvious `for b in $BRANCHES` form.
+
+## Verifying a change
+
+`plugins/parallel-session-workflow/skills/parallel-session-workflow/references/verify.sh` re-runs every
+executable claim both skills make — git semantics, claim files, the pathspec commit form, `claims.sh`,
+the probe hook — in a throwaway repository. Run it before editing either skill; if it fails on a newer
+git, the document is what is wrong.
 
 ## License
 
