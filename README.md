@@ -52,8 +52,9 @@ It covers:
   asks the one holder instead of broadcasting. The probe hook reports a held profile at start.
 - **Sharing a browser without the lock** — `references/playwright-shared.md` measures every
   `@playwright/mcp` arrangement (per-session profile, CDP, HTTP daemon, isolated contexts) for tab
-  isolation and login sharing, and gives the one-daemon recipe; `references/pw-state.mjs` exports a
-  login done by hand into a storage-state file every later session starts from.
+  isolation and login sharing; `references/pw-daemon.sh` runs the one-daemon arrangement
+  (start/stop/status/export) and `references/pw-state.mjs` exports a login done by hand into the
+  storage-state file every later session starts from.
 - **Addressing failures** — names break on rename or exit, sockets break on exit; what each error
   text means and what to do.
 - **Cross-session messaging** — what to send, and why a sibling's message is never permission to

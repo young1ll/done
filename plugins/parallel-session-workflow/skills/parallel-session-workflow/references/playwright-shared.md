@@ -39,33 +39,29 @@ Further facts that matter operationally:
 
 ## Recipe: one daemon, isolated sessions, shared login
 
-1. Run one server for the machine (a login-item, `launchd`/`systemd --user`, or a start script):
+`pw-daemon.sh` does the whole arrangement (config with the debug port, empty seed on first start,
+pidfile, log, export). Verified end to end with two Claude Code sessions running concurrently: each
+got its own context, cookies set in one were invisible to the other, no `already in use`, and no
+per-session stdio server was spawned.
 
-   ```bash
-   cat > ~/.config/playwright-mcp.json <<'JSON'
-   { "browser": { "launchOptions": { "args": ["--remote-debugging-port=9333"] } } }
-   JSON
-   npx @playwright/mcp@latest --port 8931 --isolated \
-       --storage-state ~/.config/playwright-mcp-state.json --config ~/.config/playwright-mcp.json
-   ```
+```bash
+D=<this dir>/pw-daemon.sh
+bash "$D" start                     # headed by default so a person can log in inside a session's window
+claude mcp add --transport http --scope user playwright http://localhost:8931/mcp   # once
+# and disable the stdio Playwright server that was registered before (a plugin's, typically),
+# otherwise sessions get two browser toolsets and the old one still contends for the profile.
+```
 
-   Headed (no `--headless`) so a person can log in inside a session's window when the app needs it.
-2. Register it once for the user, and disable whatever stdio Playwright server was registered before
-   (a plugin's, typically):
+After a login by hand in any session's window, while that page is still open:
 
-   ```json
-   { "mcpServers": { "playwright": { "type": "http", "url": "http://localhost:8931/mcp" } } }
-   ```
+```bash
+bash "$D" export                    # every session that connects from now on starts logged in
+bash "$D" status                    # RUNNING / ports / open pages / seed age
+```
 
-3. After a login by hand in any session's window, export and every later session starts logged in:
-
-   ```bash
-   node <this dir>/pw-state.mjs 9333 > ~/.config/playwright-mcp-state.json
-   ```
-
-   Sessions already connected reconnect (`/mcp`) to pick it up.
-4. If the daemon is down, every session's browser calls fail with `ECONNREFUSED` until it is back;
-   the SessionStart probe hook can check the port if you add that to your own hooks.
+Sessions already connected reconnect (`/mcp`) to pick up the new seed. The daemon does not survive a
+reboot by itself: the SessionStart probe hook reports "configured but not listening" and prints the
+start command. Rollback: `claude mcp remove playwright -s user`, re-enable the old server, `pw-daemon.sh stop`.
 
 ## Recipe: no daemon, still isolated
 
@@ -75,3 +71,6 @@ part (the launcher) and one server process per session.
 
 Tool names follow the registration: a plugin-registered server exposes `mcp__plugin_<x>_playwright__*`,
 a user-registered one `mcp__playwright__*`. Skills or notes that name tools need the new prefix.
+
+When the last context closes the daemon closes Chrome too; it relaunches on the next browser call.
+So `export` needs a page open somewhere — the script says so if it is not.

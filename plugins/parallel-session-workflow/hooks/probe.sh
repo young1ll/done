@@ -25,7 +25,13 @@ if [ -x "$rl" ]; then
   pwline=$(bash "$rl" playwright 2>/dev/null | grep -E '^(HELD|STALE)' | grep -v '\[me\]' | head -1)
   [ -n "$pwline" ] && pw="Playwright browser profile: $pwline"
 fi
-[ "$wt" -eq 0 ] && [ "$lock" -eq 0 ] && [ -z "$pw" ] && [ ${#live[@]} -eq 0 ] && [ ${#stale[@]} -eq 0 ] && [ ${#unknown[@]} -eq 0 ] && exit 0
+pwd_=""
+PWH=${PW_HOME:-$HOME/.config/playwright-mcp}
+if [ -f "$PWH/config.json" ]; then   # pw-daemon.sh has been set up on this machine
+  port=${PW_MCP_PORT:-8931}
+  (exec 3<>"/dev/tcp/localhost/$port") 2>/dev/null || pwd_="Playwright MCP daemon is configured but not listening on $port — browser tools will fail until: bash '$(cd "$(dirname "$0")/.." && pwd)/skills/parallel-session-workflow/references/pw-daemon.sh' start;"
+fi
+[ "$wt" -eq 0 ] && [ "$lock" -eq 0 ] && [ -z "$pw" ] && [ -z "$pwd_" ] && [ ${#live[@]} -eq 0 ] && [ ${#stale[@]} -eq 0 ] && [ ${#unknown[@]} -eq 0 ] && exit 0
 mode=$([ "$gitdir" = "$common" ] && echo "this is the main checkout — mode B (shared) rules apply" || echo "this is a linked worktree — mode A")
 out="parallel-session-workflow: parallel signals in $(basename "$(git rev-parse --show-toplevel)") —"
 [ "$wt" -gt 0 ] && out="$out $wt other worktree(s);"
@@ -34,6 +40,7 @@ out="parallel-session-workflow: parallel signals in $(basename "$(git rev-parse 
 [ ${#stale[@]} -gt 0 ] && out="$out stale claims (owner gone): ${stale[*]};"
 [ ${#unknown[@]} -gt 0 ] && out="$out claims without PID (cannot check): ${unknown[*]};"
 [ -n "$pw" ] && out="$out $pw — send PLAYWRIGHT? to that socket before opening a browser;"
+[ -n "$pwd_" ] && out="$out $pwd_"
 root=${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}
 out="$out $others other Claude session(s) on this machine. $mode. Invoke the parallel-session-workflow skill before your first git write; read claims with: bash '$root/skills/parallel-session-workflow/references/claims.sh' list"
 echo "$out"
