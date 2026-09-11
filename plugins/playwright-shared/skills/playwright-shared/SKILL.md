@@ -19,12 +19,15 @@ client of it. You never wait for a sibling to close a browser, and you never ask
 1. **Do not run a hand-over protocol for the browser.** There is no profile lock. `PLAYWRIGHT?` /
    `PLAYWRIGHT FREE` from the parallel-session-workflow skill applies to the old one-server-per-session
    setup, not here.
-2. **Name your screenshots and saved files.** The daemon has one output directory and default names are
-   millisecond timestamps, which collide when sessions screenshot together (measured: 4 screenshots → 2
-   files). Always pass `filename`, prefixed with your session name:
+2. **Name your screenshots and saved files.** Default names are millisecond timestamps in one shared
+   directory, which collide when sessions screenshot together (measured with rootless clients: 4
+   screenshots → 2 files). Always pass `filename`, prefixed with your session name:
    `browser_take_screenshot { filename: "<session-name>-orders-after-fix.png" }`. The image also comes
    back inline, so what you *see* is always yours; the rule protects the path you hand to a person.
-   Files land in `~/.config/playwright-mcp/output/` (the tool result shows the name, not the directory).
+   Where it lands depends on the client: Claude Code hands the daemon its working directory as an MCP
+   root, so a relative `filename` is written under *your* project directory (`.playwright-mcp/` by
+   convention) and an absolute one where you said. Only the unnamed, timestamped snapshots fall into
+   the daemon's shared `~/.config/playwright-mcp/output/` — and those you never hand to anyone.
 3. **Logins propagate by themselves.** If a page shows a login form, either nobody is logged in yet or
    the session expired — log in (or ask the user to, in your window), and every other session is logged
    in within a tick. Do not tell the user to run anything. A logout propagates the same way, so say so

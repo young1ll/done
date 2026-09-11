@@ -65,6 +65,8 @@ Environment: `PW_MCP_PORT` (8931), `PW_DEBUG_PORT` (9333), `PW_HOME`, `PW_HEADLE
   service restarts it; the daemon relaunches Chrome on the next call if only Chrome died).
 - Every context opens a visible window (headed by default, so a person can log in). `PW_HEADLESS=1`
   if nobody ever needs to.
+- Named files (`filename`) are written relative to the client's MCP root — in Claude Code, the session's
+  working directory — so sessions do not share them; unnamed snapshots go to the daemon's `output/`.
 - macOS and Linux. Windows untested.
 
 ## Why not …
