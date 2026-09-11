@@ -11,6 +11,8 @@
 #   claims.sh release <name>
 #   claims.sh reap                      # remove STALE claims (owner pid gone); UNKNOWN are reported, never removed
 #
+# Requirements: bash, git, kill — macOS/Linux (Git Bash on Windows untested). PID comes from CLAUDE_PID when the
+# harness sets it, else the shell's parent; SOCKET from CLAUDE_CODE_MESSAGING_SOCKET when present. Neither is required.
 # Liveness: PID via kill -0, plus SOCKET (/tmp/cc-socks/<pid>.sock) when the owner is a Claude Code
 # session. A claim without a PID line cannot be checked — it is UNKNOWN, and only the user can retire it.
 set -u

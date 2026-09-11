@@ -50,6 +50,10 @@ It covers:
 - **Resource-lock discovery** — `references/resource-lock.sh playwright` reads Chrome's `SingletonLock`
   in the Playwright MCP profile and walks the process tree to the session that holds it, so a session
   asks the one holder instead of broadcasting. The probe hook reports a held profile at start.
+- **Sharing a browser without the lock** — `references/playwright-shared.md` measures every
+  `@playwright/mcp` arrangement (per-session profile, CDP, HTTP daemon, isolated contexts) for tab
+  isolation and login sharing, and gives the one-daemon recipe; `references/pw-state.mjs` exports a
+  login done by hand into a storage-state file every later session starts from.
 - **Addressing failures** — names break on rename or exit, sockets break on exit; what each error
   text means and what to do.
 - **Cross-session messaging** — what to send, and why a sibling's message is never permission to
@@ -82,6 +86,20 @@ It covers:
 
 Commands in both plugins are written for zsh as well as bash, since that is the default shell on
 macOS and its word-splitting rules break the obvious `for b in $BRANCHES` form.
+
+## Requirements and portability
+
+- **Shell:** bash (the hook and the `references/*.sh` scripts). zsh users are covered — the scripts
+  are invoked with `bash`, and the documented snippets avoid zsh word-splitting traps.
+- **OS:** macOS and Linux are exercised by `verify.sh`. Windows is untested; `resource-lock.sh`
+  answers `UNKNOWN` there because Chromium's lock is not a symlink.
+- **Tools:** git ≥ 2.28 (`init -b`), `ps`, `readlink`; Node ≥ 22 only for `pw-state.mjs`.
+- **Harness variables:** `CLAUDE_PLUGIN_ROOT`, `CLAUDE_PROJECT_DIR`, `CLAUDE_PID`,
+  `CLAUDE_CODE_MESSAGING_SOCKET` are used when present and every script degrades without them
+  (claims fall back to the shell's parent pid; the session count reads 0). `RL_SESSION_PATTERN`
+  names another agent CLI's process for the lock walker.
+- **Nothing in the skills is project-specific.** Paths in examples are placeholders; the measurements
+  quoted as evidence came from one team's repository and are labelled as such.
 
 ## Verifying a change
 

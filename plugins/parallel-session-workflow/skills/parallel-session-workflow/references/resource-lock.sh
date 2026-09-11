@@ -12,25 +12,36 @@ PATTERN=${RL_SESSION_PATTERN:-claude}     # what a session's command line contai
 ME=${CLAUDE_PID:-$PPID}
 
 owner_of() {  # print the nearest ancestor pid whose command matches $PATTERN, else nothing
-  local p=$1 line cmd
+  local p=$1 pp cmd
   while [ "$p" -gt 1 ] 2>/dev/null; do
-    line=$(ps -o ppid=,command= -p "$p" 2>/dev/null) || return 1
-    cmd=${line#* }
+    read -r pp cmd < <(ps -o ppid=,command= -p "$p" 2>/dev/null) || return 1   # read trims ps padding
+    [ -z "$pp" ] && return 1
     case "$cmd" in *"$PATTERN"*) echo "$p"; return 0;; esac
-    p=${line%% *}; p=${p// /}
+    p=$pp
   done
   return 1
+}
+
+posix_lock_supported() {  # Chrome's SingletonLock symlink exists on macOS/Linux only
+  case "$(uname -s 2>/dev/null)" in Darwin|Linux) return 0;; *) return 1;; esac
 }
 
 case "${1:-}" in
   owner) owner_of "${2:?pid}";;
   playwright)
-    shift; root=""
+    shift; root=${PSW_PLAYWRIGHT_ROOT:-}
     while [ $# -gt 0 ]; do case "$1" in --root) root=$2; shift 2;; *) shift;; esac; done
-    [ -z "$root" ] && { [ -d "$HOME/Library/Caches/ms-playwright-mcp" ] && root="$HOME/Library/Caches/ms-playwright-mcp" || root="${XDG_CACHE_HOME:-$HOME/.cache}/ms-playwright-mcp"; }
+    if [ -z "$root" ]; then
+      for cand in "$HOME/Library/Caches/ms-playwright-mcp" "${XDG_CACHE_HOME:-$HOME/.cache}/ms-playwright-mcp" "${LOCALAPPDATA:-}/ms-playwright-mcp"; do
+        [ -n "$cand" ] && [ -d "$cand" ] && { root=$cand; break; }
+      done
+      [ -z "$root" ] && { echo "no Playwright MCP profile directory found (looked in macOS, XDG and LOCALAPPDATA locations)"; exit 0; }
+    fi
     rc=0; any=0
     for d in "$root"/*/; do
       [ -d "$d" ] || continue; any=1; prof=$(basename "$d")
+      case "$prof" in *chrome*|*chromium*|*msedge*|*edge*) ;; *) echo "UNKNOWN $prof (not a Chromium profile; no SingletonLock to read)"; continue;; esac
+      posix_lock_supported || { echo "UNKNOWN $prof (SingletonLock is a POSIX symlink; on this OS ask with <RESOURCE>? instead)"; continue; }
       if [ ! -L "$d/SingletonLock" ]; then echo "FREE  $prof"; continue; fi
       target=$(readlink "$d/SingletonLock"); cpid=${target##*-}
       if ! kill -0 "$cpid" 2>/dev/null; then echo "STALE $prof (lock -> dead pid $cpid; remove $d/SingletonLock only if no Chrome is using the profile)"; rc=2; continue; fi

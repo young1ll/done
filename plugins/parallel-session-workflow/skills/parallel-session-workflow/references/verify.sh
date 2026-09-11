@@ -2,6 +2,9 @@
 # Re-verify every executable claim these skills make, in a throwaway repository.
 # Touches nothing outside its own temp directory. Usage: bash verify.sh
 set -u
+# Isolate from the operator's own git configuration: a global rebase.autoStash, merge tool, hooks path or
+# default branch would otherwise mask or break the checks (observed: autoStash hid a dirty-tree bug).
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1
 R=$(mktemp -d "${TMPDIR:-/tmp}/psw-verify.XXXXXX") || exit 1
 trap 'rm -rf "$R"' EXIT
 cd "$R" || exit 1
@@ -51,6 +54,7 @@ git branch "rescue/x" "$D" >/dev/null 2>&1; ok "$?" "0" "git branch rescue/<n> <
 echo "== conflict handling =="
 (cd ../wt-x && echo mine > b.txt && git add b.txt && git commit -qm mine)
 echo theirs > b.txt; git add b.txt; git commit -qm theirs
+(cd ../wt-x && git checkout -q -- .)       # the stash test above left a.txt modified here; rebase refuses a dirty tree
 pre=$(cd ../wt-x && git rev-parse HEAD)   # pre-REBASE, not pre-commit
 (cd ../wt-x && git rebase develop >/dev/null 2>&1)
 u=$(cd ../wt-x && git diff --name-only --diff-filter=U | wc -l | tr -d ' '); ok "$u" "1" "--diff-filter=U lists conflicted paths"
@@ -114,8 +118,9 @@ kill "$SP" 2>/dev/null; wait "$SP" 2>/dev/null
 echo "== SessionStart probe hook =="
 PROBE="$(dirname "$0")/../../../hooks/probe.sh"
 git init -q -b main ../solo && (cd ../solo && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init)
-o=$(cd ../solo && CLAUDE_PROJECT_DIR=$PWD bash "$PROBE"); ok "$o" "" "solo checkout: probe prints nothing"
-o=$(CLAUDE_PROJECT_DIR=$PWD bash "$PROBE"); case "$o" in *"other worktree"*"mode B"*) ok y y "shared checkout with a worktree: probe reports and names mode B";; *) ok "$o" "…other worktree…mode B…" "shared checkout with a worktree: probe reports and names mode B";; esac
+mkdir -p "$R/no-profiles"
+o=$(cd ../solo && PSW_PLAYWRIGHT_ROOT="$R/no-profiles" CLAUDE_PROJECT_DIR=$PWD bash "$PROBE"); ok "$o" "" "solo checkout: probe prints nothing"
+o=$(PSW_PLAYWRIGHT_ROOT="$R/no-profiles" CLAUDE_PROJECT_DIR=$PWD bash "$PROBE"); case "$o" in *"other worktree"*"mode B"*) ok y y "shared checkout with a worktree: probe reports and names mode B";; *) ok "$o" "…other worktree…mode B…" "shared checkout with a worktree: probe reports and names mode B";; esac
 
 echo "== worktree prune is non-destructive while dirs exist =="
 before=$(git worktree list | wc -l | tr -d ' '); git worktree prune

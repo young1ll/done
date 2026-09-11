@@ -251,9 +251,9 @@ lists, lends, reaps and releases them:
 ```bash
 CS="$CLAUDE_PLUGIN_ROOT/skills/parallel-session-workflow/references/claims.sh"   # or the path the hook printed
 bash "$CS" list                                                   # read everyone's, with LIVE / STALE / UNKNOWN
-bash "$CS" write <session-name> --mode B --scope 'apps/api/src/order/**' \
-     --shared apps/web/src/features/field/column-view/business-column-view.tsx \
-     --avoid  'apps/web/src/features/field/column-view/*'        # a sibling's area you will not enter
+bash "$CS" write <session-name> --mode B --scope 'src/orders/**' \
+     --shared src/app/layout.tsx                                  # edit only after notifying its owner
+     --avoid  'src/billing/*'                                     # a sibling's area you will not enter
 bash "$CS" lend   <session-name> <path> <to-session> "why"       # file-level loan, sibling edits it for now
 bash "$CS" return <session-name> <path> <sha>                    # loan ended, at that commit
 bash "$CS" release <session-name>
@@ -327,16 +327,16 @@ close-and-hand-over round trips in one day, and one `PLAYWRIGHT?` broadcast to t
 the asker could not tell who held the profile — all three answered `FREE`, two of them for nothing.
 
 Why it collides: every session starts its own Playwright MCP server, and by default all of them open
-the **same persistent profile** (`~/Library/Caches/ms-playwright-mcp/mcp-chrome-<hash>`). Chrome
+the **same persistent profile** (`ms-playwright-mcp/mcp-chrome-<hash>` under the OS cache directory). Chrome
 guards a profile with a `SingletonLock` symlink pointing at `<host>-<chrome pid>`, and that pid's
 ancestor chain leads to the session that owns it. So the holder is a fact you can read:
 
 ```bash
 RL="$CLAUDE_PLUGIN_ROOT/skills/parallel-session-workflow/references/resource-lock.sh"
 bash "$RL" playwright
-#   FREE  mcp-chrome-e11135b
-#   HELD  mcp-chrome-e11135b by session 14712 socket=uds:/tmp/cc-socks/14712.sock chrome=26801
-#   STALE mcp-chrome-e11135b (lock -> dead pid …)       ← Chrome crashed; the lock outlived it
+#   FREE  mcp-chrome-<hash>
+#   HELD  mcp-chrome-<hash> by session 14712 socket=uds:/tmp/cc-socks/14712.sock chrome=26801
+#   STALE mcp-chrome-<hash> (lock -> dead pid …)       ← Chrome crashed; the lock outlived it
 # exit 0 free · 1 held by another session · 2 stale · 3 held by me
 ```
 
@@ -364,11 +364,11 @@ Rules, in the order they save the most time:
    Playwright window. A `FREE` that closes the browser mid-login costs them the form — announce
    before closing if a human might be typing there.
 
-The contention itself is a configuration fact, not a law: `@playwright/mcp` accepts `--user-data-dir`
-(one profile per session, no lock, but a login per profile), `--storage-state` (seed a fresh profile
-with saved cookies), and `--cdp-endpoint` (many sessions attached to one running Chrome, tabs instead
-of profiles). Which one fits is a project decision — it changes the MCP server registration, which is a
-shared file — so raise it with the user rather than switching a session's own config.
+The contention itself is a configuration fact, not a law. `@playwright/mcp` can be arranged so sessions
+never share a profile — measured variants, what each isolates, and the one that works without a
+separate browser launcher are in `references/playwright-shared.md`. Every variant changes the MCP
+server registration, which is a shared file, so raise it with the user rather than switching a
+session's own config.
 
 ### Freezing for a landing
 
@@ -417,6 +417,13 @@ Rules for a session that receives `FREEZE?`:
 - If you cannot stop cleanly, reply `BUSY` with an honest estimate rather than a silent `FROZEN`.
 - After `THAW`, rebase onto the new base before your next commit — unless the `THAW` says no push
   happened.
+
+## Task topology
+
+- One large task, multiple workers → prefer subagents inside one session, isolated as above, with
+  file ownership partitioned so two never hold one file.
+- Several unrelated tasks → one named session per task, each in its own worktree.
+- Agent teams do not auto-isolate teammates. Partition file ownership by hand when using them.
 
 ## Cross-session messaging protocol
 
