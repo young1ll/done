@@ -1,0 +1,17 @@
+{
+  "description": "Run the git-only repo probe at session start so parallel signals (other worktrees, index.lock, claim files) reach the session before its first git write.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/probe.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

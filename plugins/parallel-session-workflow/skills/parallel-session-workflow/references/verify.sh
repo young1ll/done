@@ -68,6 +68,40 @@ git clean -fdx -q >/dev/null 2>&1
 mkdir -p .claude/claims && echo x > .claude/claims/s
 s=$(git status --porcelain | wc -l | tr -d ' '); ok "$s" "1" "a working-tree claim would pollute git status (rejected)"
 
+echo "== pathspec commit with a heredoc message (-F - -- <paths>) =="
+echo s1 > s1.txt; echo s2 > s2.txt; git add s1.txt s2.txt          # s2 plays the sibling's staged file
+git commit -q -F - -- s1.txt <<'MSG'
+scoped commit, message from stdin
+MSG
+ok "$?" "0" "git commit -F - -- <path> <<heredoc succeeds"
+n=$(git show --format= --name-only HEAD | wc -l | tr -d ' '); ok "$n" "1" "only the pathspec file was committed"
+git diff --cached --name-only | grep -q s2.txt; ok "$?" "0" "the sibling's staged file is still staged, untouched"
+git commit -q -m "drain" -- s2.txt
+
+echo "== claims.sh =="
+CS="$(dirname "$0")/claims.sh"
+CLAUDE_PID=$$ bash "$CS" write me --mode B --scope 'src/**' --shared package.json >/dev/null; ok "$?" "0" "write creates a claim"
+grep -q "^PID     $$" "$C/me"; ok "$?" "0" "PID line carries the session pid"
+grep -q "^SINCE" "$C/me"; ok "$?" "0" "SINCE line present"
+printf 'SESSION ghost\nSCOPE   x/**\nPID     2147483000\nSINCE   2000-01-01 00:00\n' > "$C/ghost"
+printf 'SESSION nopid\nSCOPE   y/**\n' > "$C/nopid"
+l=$(bash "$CS" list); echo "$l" | grep -q "^LIVE     me"; ok "$?" "0" "list: live owner → LIVE"
+echo "$l" | grep -q "^STALE    ghost"; ok "$?" "0" "list: dead pid → STALE"
+echo "$l" | grep -q "^UNKNOWN  nopid"; ok "$?" "0" "list: no PID line → UNKNOWN"
+echo "$l" | grep -q "    SHARED  package.json"; ok "$?" "0" "list prints SHARED lines"
+CLAUDE_PID=$$ bash "$CS" lend me src/a.ts peer >/dev/null; grep -q "^LEND    src/a.ts -> peer" "$C/me"; ok "$?" "0" "lend appends a LEND line"
+r=$(bash "$CS" reap); [ ! -e "$C/ghost" ] && ok y y "reap removes STALE" || ok n y "reap removes STALE"
+[ -e "$C/nopid" ] && ok y y "reap keeps UNKNOWN" || ok n y "reap keeps UNKNOWN"
+[ -e "$C/me" ] && ok y y "reap keeps LIVE" || ok n y "reap keeps LIVE"
+bash "$CS" release me >/dev/null; [ ! -e "$C/me" ] && ok y y "release removes the claim" || ok n y "release removes the claim"
+rm -f "$C/nopid"
+
+echo "== SessionStart probe hook =="
+PROBE="$(dirname "$0")/../../../hooks/probe.sh"
+git init -q -b main ../solo && (cd ../solo && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init)
+o=$(cd ../solo && CLAUDE_PROJECT_DIR=$PWD bash "$PROBE"); ok "$o" "" "solo checkout: probe prints nothing"
+o=$(CLAUDE_PROJECT_DIR=$PWD bash "$PROBE"); case "$o" in *"other worktree"*"mode B"*) ok y y "shared checkout with a worktree: probe reports and names mode B";; *) ok "$o" "…other worktree…mode B…" "shared checkout with a worktree: probe reports and names mode B";; esac
+
 echo "== worktree prune is non-destructive while dirs exist =="
 before=$(git worktree list | wc -l | tr -d ' '); git worktree prune
 after=$(git worktree list | wc -l | tr -d ' '); ok "$after" "$before" "prune removed no live records"
