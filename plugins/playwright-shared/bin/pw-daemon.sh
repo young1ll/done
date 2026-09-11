@@ -76,7 +76,8 @@ case "${1:-status}" in
   enable)  rm -f "$PW_HOME/disabled"; installed && svc_load; echo "enabled";;
   install)
     NODE_BIN=$(dirname "$(command -v node)"); command -v npx >/dev/null || { echo "npx not found" >&2; exit 1; }
-    u=$(unit_path); mkdir -p "$(dirname "$u")"
+    u=$(unit_path)
+    if [ "${2:-}" = "--print" ]; then u=$(mktemp "${TMPDIR:-/tmp}/pw-unit.XXXXXX"); else mkdir -p "$(dirname "$u")"; fi   # --print never touches the real unit
     case "$(uname -s)" in
       Darwin)
         cat > "$u" <<PLIST
@@ -106,6 +107,7 @@ UNIT
         ;;
     esac
     [ "${2:-}" = "--print" ] && { cat "$u"; rm -f "$u"; exit 0; }
+    [ -f "$PW_HOME/disabled" ] && echo "note: 'disabled' marker present — the service will idle until: $SELF enable"
     kill_all                                                        # whatever ran before (hand-started or an older unit)
     case "$(uname -s)" in Darwin) ;; *) systemctl --user daemon-reload && systemctl --user enable "$LABEL" >/dev/null 2>&1;; esac
     svc_load; echo "installed $u — starts at login, restarts if it dies"

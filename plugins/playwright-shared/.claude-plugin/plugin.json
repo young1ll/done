@@ -1,7 +1,7 @@
 {
   "name": "playwright-shared",
   "description": "One Playwright MCP daemon per machine instead of one per session — every session gets its own tabs, logins flow between them automatically, and the profile-lock contention between parallel sessions disappears. Registers the HTTP server, keeps the daemon up from a SessionStart hook, and installs a login-time service.",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "author": {
     "name": "young1ll",
     "url": "https://github.com/young1ll"

@@ -14,6 +14,8 @@ touch "$R/h/disabled"; o=$(PW_HOME="$R/h" PW_MCP_PORT=1 bash "$H/pw-daemon.sh" s
 o=$(PW_HOME="$R/h" PW_MCP_PORT=1 CLAUDE_PLUGIN_ROOT="$H/.." bash "$H/../hooks/ensure.sh"); case "$o" in *disabled*) ok y y "hook: reports disabled instead of starting";; *) ok "$o" "…disabled…" "hook: reports disabled instead of starting";; esac
 rm "$R/h/disabled"
 o=$(PW_HOME="$R/h" PW_DEBUG_PORT=1 bash "$H/pw-daemon.sh" export 2>&1); ok "$?" "1" "export refuses when the debug port is down"
+export HOME="$R/home"; mkdir -p "$HOME/Library/LaunchAgents" "$HOME/.config/systemd/user"   # never touch the operator's real unit
 o=$(PW_HOME="$R/h" bash "$H/pw-daemon.sh" install --print); case "$o" in *"pw-daemon.sh"*run*) ok y y "install --print renders a unit that runs 'pw-daemon.sh run'";; *) ok "$o" "…run…" "install --print renders a unit";; esac
-[ -f "$HOME/Library/LaunchAgents/dev.young1ll.playwright-shared.plist" ] && [ ! -s "$R/h/written" ] && true
+u="$HOME/Library/LaunchAgents/dev.young1ll.playwright-shared.plist"; [ "$(uname -s)" = Darwin ] || u="$HOME/.config/systemd/user/dev.young1ll.playwright-shared.service"
+echo keep > "$u"; PW_HOME="$R/h" bash "$H/pw-daemon.sh" install --print >/dev/null; ok "$(cat "$u")" "keep" "install --print leaves an existing unit untouched (regression: it used to delete it)"
 echo; echo "$pass passed, $fail failed"; [ "$fail" -eq 0 ]
