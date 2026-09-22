@@ -2,6 +2,10 @@
 # Re-verify every executable claim these skills make, in a throwaway repository.
 # Touches nothing outside its own temp directory. Usage: bash verify.sh
 set -u
+# Resolve this script's directory BEFORE the cd below: every sibling path is taken from it, and a
+# relative invocation would otherwise resolve them inside the temp repo and fail 17 checks that are
+# actually fine. A failure here must mean the documentation is wrong, never that you typed a path.
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) || exit 1
 # Isolate from the operator's own git configuration: a global rebase.autoStash, merge tool, hooks path or
 # default branch would otherwise mask or break the checks (observed: autoStash hid a dirty-tree bug).
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1
@@ -83,7 +87,7 @@ git diff --cached --name-only | grep -q s2.txt; ok "$?" "0" "the sibling's stage
 git commit -q -m "drain" -- s2.txt
 
 echo "== claims.sh =="
-CS="$(dirname "$0")/claims.sh"
+CS="$HERE/claims.sh"
 CLAUDE_PID=$$ bash "$CS" write me --mode B --scope 'src/**' --shared package.json >/dev/null; ok "$?" "0" "write creates a claim"
 grep -q "^PID     $$" "$C/me"; ok "$?" "0" "PID line carries the session pid"
 grep -q "^SINCE" "$C/me"; ok "$?" "0" "SINCE line present"
@@ -101,7 +105,7 @@ bash "$CS" release me >/dev/null; [ ! -e "$C/me" ] && ok y y "release removes th
 rm -f "$C/nopid"
 
 echo "== resource-lock.sh =="
-RL="$(dirname "$0")/resource-lock.sh"
+RL="$HERE/resource-lock.sh"
 sleep 30 & SP=$!                                  # a "chrome": its ancestor chain contains this verify.sh
 o=$(RL_SESSION_PATTERN=verify.sh bash "$RL" owner "$SP"); ok "$o" "$$" "owner walks ppid up to the session process"
 PR="$R/pw"; mkdir -p "$PR/mcp-chrome-live" "$PR/mcp-chrome-dead" "$PR/mcp-chrome-free"
@@ -116,7 +120,7 @@ ok "$rc" "3" "exit 3 when I am the holder"
 kill "$SP" 2>/dev/null; wait "$SP" 2>/dev/null
 
 echo "== SessionStart probe hook =="
-PROBE="$(dirname "$0")/../../../hooks/probe.sh"
+PROBE="$HERE/../../../hooks/probe.sh"
 git init -q -b main ../solo && (cd ../solo && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init)
 mkdir -p "$R/no-profiles"
 o=$(cd ../solo && PSW_PLAYWRIGHT_ROOT="$R/no-profiles" CLAUDE_PROJECT_DIR=$PWD bash "$PROBE"); ok "$o" "" "solo checkout: probe prints nothing"
