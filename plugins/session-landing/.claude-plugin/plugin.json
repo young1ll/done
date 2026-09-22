@@ -1,7 +1,7 @@
 {
   "name": "session-landing",
   "description": "Get parallel session work onto the remote without races — pre-push probes, one-pusher-per-branch claiming, safe rebase-and-retry instead of force, and landing several sessions' branches in one atomic push.",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "author": {
     "name": "young1ll",
     "url": "https://github.com/young1ll"

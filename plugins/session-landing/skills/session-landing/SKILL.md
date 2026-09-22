@@ -125,6 +125,13 @@ parallel-session-workflow → `references/session-visibility.md`.
 2. **Freeze.** Send `FREEZE?` to every owning session and collect a `FROZEN <branch> @ <sha>` from
    each (protocol in the parallel-session-workflow skill). A branch with no `FROZEN` does not get
    landed — drop it from the batch and say so.
+
+   A send that succeeded is not a `FREEZE?` that was read. A session running in a different
+   permission mode holds inbound peer messages for **its own user** to approve, and that user may
+   deny them or never look; for a peer on this machine the harness reports it as
+   `[Cross-session delivery notice] … held` or `… denied`. Read that notice before you decide whether
+   to keep waiting — held and denied are both "no reply is coming", not "not yet".
+   Full table: parallel-session-workflow → "Delivered is not read".
 3. **Land**, per the batch section below.
 4. **`THAW`** (alias `RESUME`) to every session, with the landed SHA, so they rebase before their next
    commit. If the landing was abandoned — CI failed, the user withdrew the mandate, the batch was

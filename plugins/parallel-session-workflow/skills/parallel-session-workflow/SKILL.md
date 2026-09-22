@@ -16,6 +16,15 @@ Written for Claude Code (ListAgents, SendMessage, EnterWorktree, ExitWorktree), 
 coordination layer depends on those. Detection runs on git alone, and `references/git-facts.md` is
 tool-free — under another agent, or none, that layer still holds.
 
+**The harness owns the transport; this skill owns what travels on it.** Session-to-session messaging
+is native: discovery, addressing, delivery, the ban on polling and the ban on laundering a denied
+permission through a peer are all in the tools' own descriptions, and nothing here restates them.
+What the harness does not do is tell you that you are sharing a repository (git does — the probe
+below), give a message a meaning (`SCOPE`, `FREEZE?`, `THAW`), keep a claim alive after the session
+that wrote it exits, or stop two writers from sharing one working tree. And a *delivered* message is
+not an *agreed* one — reading silence correctly got harder once the transport became reliable, not
+easier. That is what the failure tables below are for.
+
 **The repo probe runs for you once.** This plugin ships a `SessionStart` hook (`hooks/probe.sh`)
 that runs the git-only probe below when a session starts or resumes. It is silent on a solo checkout;
 when it prints — other worktrees, an `index.lock`, claim files — treat that line as the trigger to
@@ -123,6 +132,25 @@ below assumes a reply. Read the kind on each row before you depend on one.
 
 Filter the roster before you send. An unanswerable `FREEZE?` is indistinguishable from a session
 ignoring you, and that difference decides whether you wait or proceed.
+
+### Delivered is not read
+
+A send that succeeds means the message reached that *session*, not that its Claude ever saw it. A
+session running in a **different permission mode than yours holds inbound peer messages for its own
+user to approve** — that user can approve them, deny them, or let them expire untouched. For a peer on
+this machine the harness reports which happened, in a notice you have to actually read:
+
+| Notice | Means | Do |
+| --- | --- | --- |
+| `[Cross-session delivery notice] … held for the recipient user's approval` | it is queued in front of a human, not in front of a Claude | do not sit on a timer — ask your user to reach that session's user, or route the work back |
+| `[Cross-session delivery notice] … denied by the recipient user` | it will never arrive | treat that session as unreachable: drop its branch from the batch and say so |
+| `[Cross-session idle notice] … is not holding your idle subscription` | no idle signal is coming from it | do not wait for one |
+| `[Cross-session idle notice] … subscription has expired` | the window closed with no signal; it may still be busy, or have ended abruptly | re-subscribe or ask — expiry is not evidence that it finished |
+| nothing at all, from a Remote Control, cloud or Desktop row | no delivery report exists for those kinds | silence carries no information there; never read it as agreement |
+
+So an unanswered `FREEZE?` has three different causes — a kind that cannot reply, a message held or
+denied at the recipient, and a session simply not reading — and only the first two are diagnosable.
+Establish which one you are in before you spend the wait.
 
 ## Choose an operating mode
 
@@ -397,6 +425,9 @@ Rules for the integrator:
 - **Filter the roster first.** Send `FREEZE?` only to sessions that can answer — see "Know which
   siblings can actually answer". A cloud or offline row will never reply, and waiting on it looks
   identical to being ignored.
+- **Read the delivery notice, not the clock.** A `FREEZE?` that was held for the recipient's user, or
+  denied by them, is not a slow reply — it is no reply, and on this machine the harness says so. Check
+  for that notice before you spend the wait; see "Delivered is not read".
 - Do not land a branch you have no `FROZEN` for. A `BUSY` that never resolves, or an owner that
   cannot reply at all, means you drop that branch from the batch — and say so, to the user and to
   that session.
@@ -446,8 +477,20 @@ you:
   a greeting. `summary` — 5-10 words, never transmitted — labels the row in your own transcript, so
   use it: `SCOPE apps/api/**` beats an unlabelled send when you are reconstructing later who claimed
   what.
-- **A reply needs an address you were given.** Answer an incoming message by copying its `from`
-  attribute into your `to`; see the `FREEZE?` receiver rules above for the exact shape.
+- **A reply needs an address you were given — and the tool's own description will mislead you here.**
+  SendMessage states that "the name IS the address; there is no separate address syntax", then two
+  sentences later tells you to answer by copying the incoming `from` into your `to`. Both sentences
+  ship together and they disagree: `from` is a transport address — `uds:/tmp/cc-socks/<pid>.sock` for a
+  session on this machine, `bridge:<session id>` for a relayed one — not a name. The address form is
+  real: the harness parses the `uds:` and `bridge:` schemes, and the peer file-send tool documents them
+  outright in its own `to`. Copy `from` verbatim. Do not "correct" it into a name because one sentence
+  said names are all there is.
+- **The envelope carries more than `from`.** Its shape is
+  `<cross-session-message from="…" from-session="…" hop-chain="…" from-name="…" from-mode="…">`.
+  `from-name` is the human label; `from-mode` is the sender's permission mode, which is what decides
+  whether your *reply* lands in an approval queue. A `hop-chain` means the message was relayed, so the
+  session you are answering need not be the one that started the exchange — restate what you are
+  agreeing to instead of replying "yes".
 - **Idle is not frozen.** `notify_when_idle` tells you a session finished its turn — it can finish
   holding uncommitted edits. Before a landing you need a `FROZEN` reply, not idleness.
 
@@ -464,8 +507,9 @@ across ~700 sends, these are the failures and what each one means:
 | `No agent named 'x' is reachable` | renamed, or exited since you last listed | re-run ListAgents; if a near name is offered, confirm it is the same session by its directory or claim before resending |
 | `'x' matches one session that could be checked, but not every session could be — re-send with the ref` | two rosters, one unreachable; the name is ambiguous | append the ` [ref]` from the ListAgents row: `to: "x [ab12cd]"` |
 | `Failed to send to uds:… ENOENT` | the peer process exited; its socket died with it | the session is gone — its claim is stale (`claims.sh reap`), its `FROZEN` is void; tell the user |
-| `InputValidationError … could not be parsed as JSON` on a subscribe-only send | an empty `message` with `notify_when_idle` breaks the encoder | always send a real first line; there is no free probe |
-| delivered, no reply | peer is a cloud/offline row, or nobody is reading | see "Know which siblings can actually answer"; do not wait past what the task tolerates |
+| `InputValidationError … could not be parsed as JSON` on a subscribe-only send | the **caller's** encoder, not the harness, cannot emit an absent or empty `message`: it writes `"message": ` with no value and the call never leaves | SendMessage tells you to omit `message` for a free subscription — you cannot. Send a real first line. Reproduced on 2.1.278 and on three earlier builds |
+| `[Cross-session delivery notice] … held` / `… denied` | the recipient runs a different permission mode and its user gates inbound peer messages | "Delivered is not read" above — it is not in flight, so do not wait as though it were |
+| delivered, no reply, no notice | peer is a cloud/offline row, or nobody is reading | see "Know which siblings can actually answer"; do not wait past what the task tolerates |
 
 ## Shared file rules
 
@@ -529,6 +573,7 @@ on a shared repository.
 | a push was rejected | **session-landing** skill → decoding rejections |
 | a claim file whose owner is gone, or with no `PID` | "Stale claims" above — `claims.sh reap` for STALE, the user for UNKNOWN |
 | `No agent named …` / `re-send with the ref` / `ENOENT … .sock` | "Addressing failures" above |
+| a `FREEZE?` or `SCOPE` got no answer and you cannot tell why | "Delivered is not read" above — held, denied, unavailable and expired each have their own notice |
 | `Browser is already in use for …` | "Resource locks" above — `resource-lock.sh playwright`, then `PLAYWRIGHT?` to the holder only |
 | a worktree is missing `node_modules` / `.env` | not a failure — provision it (mode A, step 2) |
 
