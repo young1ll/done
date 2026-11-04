@@ -56,6 +56,9 @@ bash "$D" disable | enable         # keep hook and service from starting it (e.g
 
 Files live in `~/.config/playwright-mcp/` (`state.json` seed, `config.json`, logs, `output/`).
 Environment: `PW_MCP_PORT` (8931), `PW_DEBUG_PORT` (9333), `PW_HOME`, `PW_HEADLESS=1`.
+The browser is Playwright's own Chrome for Testing (`run` installs the build the MCP version expects), never the
+installed Google Chrome: on macOS a daemon-launched `Google Chrome.app` counts as "Chrome is running", so opening
+Chrome from the Dock shows the daemon's window and the user's own profile never starts.
 
 ## Limits
 

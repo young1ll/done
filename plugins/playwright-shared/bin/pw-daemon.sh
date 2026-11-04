@@ -28,7 +28,9 @@ wait_port() { for i in $(seq 1 "${1:-90}"); do listening "$PW_MCP_PORT" && retur
 stop_pid() { alive "$1" || { rm -f "$1"; return; }; p=$(cat "$1"); pkill -TERM -P "$p" 2>/dev/null; kill -TERM "$p" 2>/dev/null; sleep 1; kill -0 "$p" 2>/dev/null && kill -KILL "$p" 2>/dev/null; rm -f "$1"; }
 prepare() {
   [ -s "$PW_STATE" ] || printf '{"cookies":[],"origins":[]}\n' > "$PW_STATE"
-  printf '{ "browser": { "launchOptions": { "args": ["--remote-debugging-port=%s"] } } }\n' "$PW_DEBUG_PORT" > "$CFG"
+  # Playwright's own Chrome for Testing, not the installed Google Chrome: launched from /Applications/Google Chrome.app,
+  # macOS takes the daemon's browser for "Chrome is running" and the Dock opens its window instead of the user's Chrome.
+  printf '{ "browser": { "browserName": "chromium", "launchOptions": { "channel": "chrome-for-testing", "args": ["--remote-debugging-port=%s"] } } }\n' "$PW_DEBUG_PORT" > "$CFG"
   ARGS=(--port "$PW_MCP_PORT" --isolated --storage-state "$PW_STATE" --config "$CFG" --output-dir "$PW_HOME/output")
   [ "${PW_HEADLESS:-0}" = 1 ] && ARGS+=(--headless)
 }
@@ -43,6 +45,8 @@ case "${1:-status}" in
     [ -f "$PW_HOME/disabled" ] && { echo "disabled"; exec sleep 3600; }
     prepare; cd "$PW_HOME/output" || exit 1          # files saved by name land next to the timestamped ones
     echo $$ > "$SVPIDF"
+    # the Chromium build this @playwright/mcp version launches; a no-op once it is there
+    npx -p "$PW_MCP_PKG" playwright install --no-shell chromium >> "$LOG" 2>&1 < /dev/null || echo "browser install failed (see above)" >> "$LOG"
     npx "$PW_MCP_PKG" "${ARGS[@]}" >> "$LOG" 2>&1 < /dev/null & echo $! > "$PIDF"
     node "$HERE/pw-sync.mjs" --port "$PW_DEBUG_PORT" --state "$PW_STATE" >> "$SLOG" 2>&1 < /dev/null & echo $! > "$SPIDF"
     cleanup() { stop_pid "$SPIDF"; stop_pid "$PIDF"; rm -f "$SVPIDF"; }

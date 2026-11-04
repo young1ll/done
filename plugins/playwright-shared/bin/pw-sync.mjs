@@ -34,9 +34,18 @@ async function session() {
   const ws = new WebSocket(ver.webSocketDebuggerUrl);
   await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
   let id = 0; const pending = new Map();
-  ws.onmessage = e => { const m = JSON.parse(e.data); if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); } };
-  const closed = new Promise(r => ws.onclose = r);
-  const send = (method, params = {}) => new Promise(r => { const i = ++id; pending.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
+  ws.onmessage = e => { const m = JSON.parse(e.data); if (m.id && pending.has(m.id)) { pending.get(m.id).res(m); pending.delete(m.id); } };
+  // A request Chrome never answers must reject on close: a promise left pending with no socket open lets node
+  // exit ("unsettled top-level await") instead of reconnecting. Reject rather than resolve empty — an empty
+  // cookie list would read as "every cookie disappeared" and expire the whole jar.
+  const closed = new Promise(r => ws.onclose = () => {
+    if (pending.size) log('chrome connection closed mid-request');
+    for (const p of pending.values()) p.rej(new Error('chrome connection closed')); pending.clear(); r();
+  });
+  const send = (method, params = {}) => new Promise((res, rej) => {
+    if (ws.readyState !== WebSocket.OPEN) return rej(new Error('chrome connection closed'));
+    const i = ++id; pending.set(i, { res, rej }); ws.send(JSON.stringify({ id: i, method, params }));
+  });
   const prev = new Map();                    // ctx -> Map(key -> cookie)
   log('connected to chrome', ver.Browser);
   while (ws.readyState === WebSocket.OPEN) {
